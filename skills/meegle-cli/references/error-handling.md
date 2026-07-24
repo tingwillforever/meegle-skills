@@ -22,6 +22,27 @@ SKILL.md 主文件已经收录错误处理总则与熔断条件，本文件提�
 | `不满足层级配置`（级联层级错误） | 查 `children` 树，展示末级叶子节点让用户选择 |
 | `invalid select option(s)`（枚举不合法） | 从 `possible values` 匹配；唯一匹配则修正重试，否则询问用户 |
 
+## 数据权限硬停错误
+
+以下错误不是“再试一种命令也许能成”的问题，而是服务端已经明确确认当前账号缺少数据权限。命中这些 code 时，**立即停止当前业务目标的进一步探索**：
+
+- `instance_member_required`
+- `outside_allowed_projects`
+- `outside_allowed_business_lines`
+- `project_mgmt_people_filter_mismatch`
+- `project_mgmt_outside_membership`
+
+处理规则：
+
+- 不重试同一目标的其他查询命令
+- 不改用更宽口径的搜索方式继续探测
+- 不因为这类错误自动追加 `meegle doctor --format json`
+- 直接告诉用户缺的是什么权限，并提示去申请权限或联系管理员补项目/工作项成员
+
+推荐话术：
+
+> "当前命中的是数据权限限制，不是命令构造问题。我先停在这里。请申请对应项目/业务线权限，或联系管理员把当前账号加入相关项目/工作项成员后，再继续查询。"
+
 ## 错误速查
 
 | 现象 | 排查/修复 |
@@ -39,7 +60,8 @@ SKILL.md 主文件已经收录错误处理总则与熔断条件，本文件提�
 | node not found | 先 `meegle workitem get` 获取真实 `node_id`，禁止猜测 |
 | 节点流转失败 | 节点流用 `meegle workflow transition`；状态流先 `meegle workflow list-state-transitions` 取 `transition_id`，再 `meegle workflow list-state-required` 查必填项，最后 `meegle workflow transition-state` |
 | 创建工作项缺少模板 | `meegle workitem meta-create-fields --project-key PROJ --work-item-type-key TYPE` 看 `template` 字段定义 |
-| 角色更新失败 | 私有 CLI 的 `workitem create/update` 不暴露 `role_owners` / `role_operate`；节点流转场景按 inspect 结果使用 `workflow transition` / `workflow update-node --role-assignee`，其他场景让用户到 web 端处理 |
+| 角色更新失败 | 先区分是**实例角色**还是**节点/状态流转角色**：实例角色优先走 `workitem create/update` 写 `role_owners`；节点/状态流转本身的 owner / assignee 调整再走 `workflow transition` / `workflow update-node`。`current_status_operator` 是系统派生字段，不可直写 |
+| 读取/搜索命中 `instance_member_required`、`outside_allowed_projects`、`outside_allowed_business_lines` 等授权错误 | 这是数据权限问题，立即停止当前探索；告知用户申请权限或联系管理员补成员，不重试 |
 
 ---
 

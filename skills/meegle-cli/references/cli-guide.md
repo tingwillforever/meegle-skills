@@ -44,6 +44,12 @@ meegle inspect comment.add --format json
 - `runtime_source == "snapshot"`：只允许 `inspect` / `doctor` 等只读诊断；不要继续执行业务命令
 - `deprecation.replacement` 存在：优先改用 replacement
 
+## 历史别名与 `tool_name`
+
+- `inspect --format json` 返回的 `tool_name` 用于说明底层绑定，不等于 public CLI 命令名。
+- 组装和执行命令时，只认 `inspect.name` / `parameters[].flag` 暴露的 public command surface，不要把内部 `tool_name`、旧 skill、旧 OpenSpec 里的历史别名直接拿来执行。
+- 常见混淆例子：当前 public command 是 `workitem meta-types` / `workitem meta-fields`，而历史材料里可能出现 `space types` / `workitem meta`，底层 `tool_name` 还可能分别显示为 `meegle_space_types` / `meegle_config_field_list`。遇到这种情况，优先相信 live `inspect`。
+
 ## Flag 语义层
 
 全局 flag 不是同一类能力。先判断语义层，再判断能否影响后端请求。

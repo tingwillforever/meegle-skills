@@ -22,6 +22,7 @@ description: |
 - 读操作先建模：查询主体、筛选锚点、过滤条件、展示字段。工作项读路径见 [references/workitem.md](references/workitem.md)，视图读路径见 [references/view.md](references/view.md)。
 - 写操作先建模：目标对象、目标字段 / 目标状态、变更意图、风险等级、结果核验。创建、更新、节点/状态流转、发布/部署任务必须进入对应 SOP。
 - 诊断操作先建模：症状、命令面、`runtime_source`、auth/config 状态、最小复现命令。诊断和错误自愈见 [references/runtime-private-remote-mcp.md](references/runtime-private-remote-mcp.md) 与 [references/error-handling.md](references/error-handling.md)。
+- 命中明确的数据权限错误（如 `instance_member_required`、`outside_allowed_projects`、`outside_allowed_business_lines`、`project_mgmt_people_filter_mismatch`）时，立即停止继续探索或换查询路径，直接告知用户去申请权限或联系管理员补成员。
 - 运行时事实只来自 CLI / backend：`url decode`、`meta-types`、`meta-fields`、`inspect`、verified command surface 或已验证 public CLI contract。不要从 URL、skill 文本、缓存或历史运行猜字段 key、状态 value、人员映射、权限、risk tier 或 capability。
 - 读路径成本预算：同一工作项类型最多一次 `meta-fields`；同一展示页最多一次 `user query`；每个业务目标最终查询只执行一次。最终查询成功后，只能本地映射、裁剪、排序和格式化。
 - 默认展示页执行模式：业务命令只负责取数据；最终回答直接基于命令返回 JSON 手工整理。不要为了状态/负责人展示再发本地格式化命令。默认展示不能只列 `ID + 名称`；必须展示 `ID`、`名称`、`当前状态`、`当前负责人`、`创建时间` 五列。
@@ -80,6 +81,12 @@ meegle inspect <resource>.<method> --format json
 - `deprecation.replacement` 存在：优先迁到 replacement，不再把旧命令当默认路径
 
 涉及 `--select` 时，不要猜命令是否支持 backend projection。先看 `inspect --format json` 的 projection metadata，再决定用 `--select` 还是 `--output-select`。
+
+## 历史别名与内部映射
+
+- `inspect --format json` 里的 `tool_name` 是内部 tool / mapper 标识，不是用户应执行的 public CLI 命令。
+- 当前 public command 以 `meegle <resource> <method>` 为准；例如 `workitem meta-types` 的底层 `tool_name` 可能是 `meegle_space_types`，`workitem meta-fields` 的底层 `tool_name` 可能是 `meegle_config_field_list`。
+- 历史材料里如果出现 `space types`、`workitem meta` 这类旧别名，只能把它们当映射/迁移背景，不能当成当前默认执行路径；除非本机 `inspect` 明确暴露了这些命令，否则不要照着运行。
 
 ## CLI 执行语义
 

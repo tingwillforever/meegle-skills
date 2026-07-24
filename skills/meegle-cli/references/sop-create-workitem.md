@@ -5,7 +5,7 @@
 本 SOP 用于在飞书项目中创建工作项（需求、任务、缺陷等），全程自动化执行。
 
 > 与上游 SaaS 版的关键差异（私有 cli）：
-> - **角色（role）字段不可写**：私有 mcp 的 `workitem.create` 不暴露 `role_operate` 参数。如需设置角色成员，告知用户"私有部署 cli 暂不支持角色字段写入，请到 web 端操作"。
+> - **`role_owners` 可写，`current_status_operator` 不可写**：人员语义若本质上是实例角色（如处理人 / 项目经理 / 研发代表 / 测试代表），优先写 `role_owners`；`current_status_operator` 是系统根据当前流转单元引用的实例角色自动派生的字段，不能直接写。
 > - **按姓名查 userkey** 默认只用 `meegle user search --query "姓名" --project-key PROJ --format json`；若出现同名结果，展示候选 `email` / `user_key` 让用户确认。
 > - **模板 ID 是必填项**：创建时必须传 `--template-id`。
 
@@ -30,6 +30,8 @@
 - **工作项类型** — 需求 / 任务 / 缺陷 / 其他
 - **字段值** — 标题、优先级、负责人、描述等
 - **URL**（如有）— 先调 `meegle url decode --url '<URL>' --format json` 解析
+
+如果用户提到的是“处理人 / 项目经理 / 研发代表 / 测试代表”这类角色语义，创建场景默认**按实例角色理解**，优先准备写入 `role_owners`；不要先把这类语义降级成 `owner`。
 
 ### STEP 2 — 确认空间和类型
 
@@ -96,8 +98,14 @@ meegle workitem meta-create-fields \
 
 1. 标题、模板
 2. `workitem create-preflight` 返回的有效必填字段
-3. 用户明确要求的可选字段，例如 `description`
+3. 用户明确要求的可选字段，例如 `description`、`role_owners`
 4. 未要求的可选字段不传
+
+创建场景下如果用户指定了“处理人 / 项目经理 / 研发代表 / 测试代表”等角色人员：
+
+- 优先把目标人写到 `role_owners`
+- 不直写 `current_status_operator`
+- `owner` 仅在用户明确要设置实例 owner，或该语义在当前类型上找不到对应 role 时才作为兜底字段
 
 ### STEP 6 — 转换字段值
 
@@ -119,6 +127,11 @@ meegle workitem meta-create-fields \
 | 枚举值 | 从 `meta-create-fields` 的 `options[].value` 取真实 option_id；**禁止照搬官方文档示例的 `"0"`/`"1"`** |
 | 日期 | 转为毫秒时间戳 |
 | 关联字段名称→ID | 用 `search-filter`/`search-by-params` 解析后传 number（见 [field-value-extras.md](field-value-extras.md)）|
+
+角色字段补充约束：
+
+- `role_owners` 的 `field_value` shape 见 [field-value-format.md](field-value-format.md)；按原生结构体数组传入，不要改写成 `owner`
+- `current_status_operator` 是系统字段，只能创建后由后端根据初始状态/初始节点引用的实例角色自动派生
 
 ### STEP 7 — 创建
 
@@ -200,6 +213,12 @@ meegle workitem get \
 | `field [xxx] is illegal` | 若字段是 preflight 有效必填，或 no-preflight 路径下的 `meta-create-fields.is_required == 1 && is_visibility == 1`，停止并报告元数据/preflight/create 契约不一致；若是可选字段，移除该可选字段后最多重试一次 |
 | `不满足层级配置` | 查 `children` 树，展示末级叶子节点让用户选择 |
 | 明确缺少必填字段 | 核对字段类型限制，关联工作项尝试数字↔字符串切换 |
+
+若本轮失败与“处理人 / 项目经理 / 研发代表”等角色语义相关：
+
+- 先确认是否应该写 `role_owners` 而不是 `owner`
+- 再确认该工作项类型是否存在对应实例角色
+- 不要通过直写 `current_status_operator` 规避
 
 ---
 

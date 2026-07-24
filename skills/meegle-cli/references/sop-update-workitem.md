@@ -5,7 +5,7 @@
 本 SOP 用于在飞书项目中更新工作项的字段值，全程自动化执行。**不包括状态/节点流转**（见 [`sop-transition-state.md`](sop-transition-state.md) / [`sop-transition-node.md`](sop-transition-node.md)）和**节点级字段**（见 STEP 4 边界）。
 
 > 与上游 SaaS 版的关键差异（私有 cli）：
-> - **角色（role）字段不可写**：私有 mcp 的 `workitem.update` 不暴露 `role_operate` 参数。如果用户要改角色成员，明确告知"私有部署的 cli 暂不支持角色字段写入,请到 web 端操作"。
+> - **`role_owners` 可写，`current_status_operator` 不可写**：如果用户要改的是实例角色成员，使用 `workitem update --update-fields` 写 `role_owners`；`current_status_operator` 是系统派生字段，不能直接写。
 > - **附件操作**按 MCP 实际公开命令执行：上传通用文件走 `attachment upload-file`，工作项附件走 `attachment upload` / `attachment download` / `attachment delete`；详情见 [`attachment.md`](attachment.md)。
 > - **按姓名查 userkey** 默认只用 `meegle user search --query "姓名" --project-key PROJ --format json`；若出现同名结果，展示候选 `email` / `user_key` 让用户确认。
 
@@ -29,6 +29,8 @@
 
 - **目标工作项** — URL、工作项 ID 或名称
 - **修改内容** — 哪些字段要改成什么值
+
+如果用户明确说的是“项目经理 / 研发代表 / 测试代表 / 报告人”等具体角色名，优先按实例角色更新 `role_owners`。如果用户只说泛化词“处理人”，才需要再结合当前生效流转单元去解释它指向哪个实例角色。
 
 > **URL 处理**：用户给了 URL 必须先调 `meegle url decode --url '<URL>' --format json`。只有 `url_kind == workitem_detail` 才能进入本 SOP；其他 kind 按 [`url-kinds.md`](url-kinds.md) 拒绝或追问。拿到 `simple_name` 和 `work_item_id` 后，再用 `meegle space list --format json` 把 `simple_name` 转成权威 `project_key`（同名空间可能多个）。`url decode` 返回的 `work_item_type` 只是 `api_name`，**不是** `work_item_type_key`。**禁止**自己从 URL 截取路径段作参数，也不要把 `api_name` 直接当成 type key 传给业务命令。
 
@@ -67,13 +69,20 @@ meegle workitem meta-create-fields \
 
 > ⚠️ 本节下方旧 `转换规则` 表（标 stringified 的那部分）保留作为 `workitem update` 个别字段历史契约的兜底，仅在 [field-value-format.md](field-value-format.md) 的原生 shape 实测被后端拒绝时回退使用。`workitem create` 永远用原生 shape。
 
-🚨 **关键约定**：`field_value` 协议层**永远是 STRING**。标量直接字符串化；数组/对象**必须先 JSON.stringify** 再传，否则报 `need STRING type, but got: LIST` / `MAP`。
+角色字段补充约束：
+
+- `role_owners` 的 `field_value` 走 [field-value-format.md](field-value-format.md) 中的原生结构体数组
+- 不要把“处理人”默认翻译成 `owner`
+- 不要尝试直写 `current_status_operator`
+
+🚨 **关键约定**：`workitem update` 里多数旧字段仍沿用 **STRING 协议层**，标量直接字符串化，很多数组/对象字段需要先 JSON.stringify；但像 `role_owners` 这类已经在 [field-value-format.md](field-value-format.md) 明确为**原生结构**的字段，优先按那里的原生 shape 传，不要强行 stringify。
 
 | field_type_key | 转换规则 & field_value 传参 |
 |---|---|
 | `text` / `number` / `bool` / `link` | 直接字符串：`"100"` / `"true"` / `"https://..."` |
 | `user` | 单个 userkey 字符串。**用户给姓名时** → 默认先用 `meegle user search --query "姓名" --project-key PROJ --format json`；若出现同名结果，展示候选 `email` / `user_key` 让用户确认 |
 | `multi-user` | **stringified** 一维 userkey 数组：`"[\"key1\",\"key2\"]"` |
+| `role_owners` | 结构体数组；按 [field-value-format.md](field-value-format.md) 的原生 shape 传 `[{\"role\":\"role_xxx\",\"owners\":[\"user_key\"]}]`，不要降级成 `owner`，也不要额外 JSON.stringify 这一层 |
 | `select` / `radio` | 纯字符串 option_id：`"opt_xxx"` |
 | `multi-select` | **stringified** 对象数组：`"[{\"option_id\":\"xxx\"}, {\"option_id\":\"yyy\"}]"` |
 | `tree-select` | 纯字符串末级叶子的 option_id |
@@ -106,7 +115,7 @@ meegle workitem update \
 --update-fields '[
   {"field_key":"name","field_value":"新标题"},
   {"field_key":"priority","field_value":"opt_high"},
-  {"field_key":"owner","field_value":"7457914056381416309"},
+  {"field_key":"role_owners","field_value":[{"role":"role_handler","owners":["7457914056381416309"]}]},
   {"field_key":"tags","field_value":"[{\"option_id\":\"tag_a\"},{\"option_id\":\"tag_b\"}]"}
 ]'
 ```
@@ -163,7 +172,7 @@ meegle workitem get \
 | 场景 | 处理 |
 |---|---|
 | **节点级字段**（节点排期、节点负责人、节点自定义字段） | **不属于本 SOP**，必须切到 [`sop-transition-node.md`](sop-transition-node.md) 或直接调 `meegle workflow update-node --project-key X --work-item-type-key T --work-item-id ID --node-id <node_id> --schedules '...' --node-owners '...'`。如检测到用户要改节点字段，自动切换。 |
-| **角色字段更新**（role_operate） | ❌ **私有部署 cli 暂不支持**。`workitem.update` 不接受 `role_operate`。明确告知用户去 web 端操作或联系管理员。 |
+| **实例角色成员更新** | ✅ 优先用 `workitem update` 写 `role_owners`；只有节点流/状态流本身要求改 node owner / role_assignee 时，才切到 workflow 路径。 |
 | **状态流转 / 节点流转** | 不属于本 SOP。状态流走 [`sop-transition-state.md`](sop-transition-state.md)（`workflow transition-state`），节点流走 [`sop-transition-node.md`](sop-transition-node.md)（`workflow transition`）。 |
 | **模板切换**（修改 template 字段） | 高风险操作，**唯一需要主动确认**的场景。提醒用户切换模板会影响后续可见字段集。 |
 | **循环引用** | 关联类字段写入前**必须排查当前工作项自身 ID**，禁止把自身 ID 写入关联项，否则触发 `exists loop`。 |
