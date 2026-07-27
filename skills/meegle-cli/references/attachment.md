@@ -98,7 +98,7 @@ meegle attachment upload \
 
 ## attachment download
 
-按附件 UUID 下载已有工作项附件。`uuid` 必须来自接口返回，不要从页面 URL 手工拼接。
+按附件 UUID 下载已有工作项附件。`uuid` 必须来自接口返回，不要从页面 URL 手工拼接。CLI 通过当前 MCP Server 发布的鉴权 HTTP stream 直接写入本地文件，不会把附件字节转成 UTF-8 或 JSON 字符串。
 
 ```bash
 meegle attachment download \
@@ -106,8 +106,28 @@ meegle attachment download \
   --work-item-type-key TYPE_KEY \
   --work-item-id 12345 \
   --uuid ATTACHMENT_UUID \
+  --output-dir ./downloads \
   --format json
 ```
+
+- `--output /path/to/file`：使用指定的完整文件路径。
+- `--output-dir /path/to/dir`：使用服务端返回的附件文件名写入指定目录。
+- 两者都不传：写入当前目录。
+- 默认不覆盖已有文件；确需替换时显式传 `--force`。
+- CLI 先写同目录临时文件，校验 `Content-Length` 后再原子发布；下载中断不会留下目标半文件。
+
+成功时 stdout 只返回 `path`、`filename`、`content_type`、`size_bytes` 元数据。例如：
+
+```json
+{
+  "path": "/absolute/path/downloads/sample.jpg",
+  "filename": "sample.jpg",
+  "content_type": "image/jpeg",
+  "size_bytes": 123456
+}
+```
+
+不要使用 `--format json > attachment.jpg` 获取附件内容；`--format` 只控制上述元数据的展示格式。如果服务端未发布无损下载 capability，CLI 会返回 `ATTACHMENT_BINARY_DOWNLOAD_UNSUPPORTED`，此时升级远端 Meegle MCP Server 并加 `--refresh` 重试，不会回退到旧的文本 MCP 响应。
 
 ## attachment delete
 

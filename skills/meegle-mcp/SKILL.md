@@ -24,8 +24,8 @@ description: |
 | 场景 | 默认前置 | 按需下钻 |
 |---|---|---|
 | 工作项读取 / 搜索 | [references/workitem-read.md](references/workitem-read.md) | 构造复杂 `search_group` 时读 [references/search-params-format.md](references/search-params-format.md)；关联字段名称转 ID 时读 [references/field-value-extras.md](references/field-value-extras.md)；最终展示读 [references/result-display.md](references/result-display.md) |
-| 创建工作项 | [references/sop-create-workitem.md](references/sop-create-workitem.md) | 构造字段值前读 [references/field-value-format.md](references/field-value-format.md)；失败自愈读 [references/error-handling.md](references/error-handling.md)；readback 输出读 [references/result-display.md](references/result-display.md) |
-| 更新工作项 | [references/sop-update-workitem.md](references/sop-update-workitem.md) | 构造字段值前读 [references/field-value-format.md](references/field-value-format.md)；关联字段名称转 ID 时读 [references/field-value-extras.md](references/field-value-extras.md)；readback 输出读 [references/result-display.md](references/result-display.md) |
+| 创建工作项 | [references/sop-create-workitem.md](references/sop-create-workitem.md) | 实例角色赋人读 [references/role-assignment.md](references/role-assignment.md)；其他字段值读 [references/field-value-format.md](references/field-value-format.md)；失败自愈读 [references/error-handling.md](references/error-handling.md) |
+| 更新工作项 | [references/sop-update-workitem.md](references/sop-update-workitem.md) | 实例角色赋人读 [references/role-assignment.md](references/role-assignment.md)；其他字段值读 [references/field-value-format.md](references/field-value-format.md)；关联字段名称转 ID 时读 [references/field-value-extras.md](references/field-value-extras.md) |
 | 状态流转 | [references/sop-transition-state.md](references/sop-transition-state.md) | 字段补充失败或硬拦截时读 [references/error-handling.md](references/error-handling.md) |
 | 节点流转 / 节点更新 | [references/sop-transition-node.md](references/sop-transition-node.md) | 节点表单字段 shape 不清楚时读 [references/field-value-format.md](references/field-value-format.md) |
 | 发布计划部署任务 | [references/sop-release-deploy-task.md](references/sop-release-deploy-task.md) | 需要解释 direct MCP / CLI gap 时读 [references/runtime-boundary.md](references/runtime-boundary.md)；输出停点读 [references/result-display.md](references/result-display.md) |
@@ -51,7 +51,7 @@ description: |
 3. 仅在需要时发现空间。若用户已明确给出 `project_key`，已给 `cbg_product_develop` 这类可直接用于读接口的空间锚点，或当前 session 的 `projectKeys` 只有一个默认空间，不要先跑 `meegle.space.list`。
 4. 当前 session 的 `projectKeys` 只有一个时，该值就是默认 `project_key`。读写路径都直接使用，不要再次向用户确认“是否还是这个空间”。只有 session 暴露多个 `projectKeys`、用户明确指定了别的空间、或目标接口明确要求另一个真实 key 形态时，才进入空间确认或解析路径。
 5. direct MCP 的当前用户语义默认通过 `meegle.user.query` + `current_login_user()` 获取；不要假设有 CLI `auth whoami`。
-6. 类型发现走 `meegle.space.types`，字段发现走 `meegle.workitem.meta`；不要假设有 CLI `meta-types` / `meta-fields` 命令名。
+6. 类型发现走 `meegle.space.types`，创建页字段发现走 `meegle.workitem.meta`，完整字段配置可走 `meegle.config.field.list`，实例角色发现走 `meegle.config.flowRole.list`；不要使用 CLI 命令名。
 7. “我参与 / 我负责 / 我相关 + 已知空间 + 工作项类型名”是固定黄金路径：`meegle.user.query` -> `meegle.space.types` -> `meegle.workitem.search.filter` 或 `meegle.workitem.search.byParams`。`meegle.space.types` 成功后直接进入最终查询，不要再调用 `meegle.space.list`、`meegle.space.detail`、`meegle.user.search`、智能搜索或跨空间搜索类路径试探。
 8. “关联到某工作项的工作项”是固定只读路径：`meegle.space.types` -> `meegle.workitem.search.filter` 或 `meegle.workitem.get` 定位锚点数字 ID -> `meegle.workitem.meta` 找关联字段 -> `meegle.workitem.search.byParams`。这类任务的第一条 Meegle tool call 必须是 `meegle.space.types`；这条路径不需要也不允许先做连通性探活、资源、租户、视图写入、创建、删除、脚本枚举或其它 Meegle 业务工具探测。
 9. 回答时优先直接基于 MCP 的结构化返回整理结果，不要为了“格式化”再重复查询。
@@ -88,6 +88,11 @@ description: |
 - `meegle.workitem.search.filter`
 - `meegle.workitem.search.byParams`
 - `meegle.workitem.opRecords`
+
+### 字段与实例角色元数据
+
+- `meegle.config.field.list`
+- `meegle.config.flowRole.list`
 
 ### 工作项写路径
 

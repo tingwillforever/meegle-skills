@@ -24,11 +24,12 @@
 2. `meegle.workitem.meta`
    - 读取字段、模板、options、字段类型。
    - 字段名只能映射到当前类型元数据中的 field key。
+   - 用户指定处理人、报告人、项目经理等实例角色时，另调用一次 `meegle.config.flowRole.list`，按 [role-assignment.md](role-assignment.md) 解析。
 3. `meegle.workitem.createPreflight`
    - 获取有效必填字段。
    - `createPreflight` 不是字段白名单；用户明确要求的可选字段仍要保留。
 4. 构造 payload。
-   - 构造任何字段值前读 [field-value-format.md](field-value-format.md)。
+   - 角色-only 字段读 [role-assignment.md](role-assignment.md)；其他字段值读 [field-value-format.md](field-value-format.md)。
    - 关联字段名称转 ID 时读 [field-value-extras.md](field-value-extras.md)。
 5. `meegle.workitem.create`
 6. `meegle.workitem.get`
@@ -39,6 +40,7 @@
 - option value 必须来自元数据，不使用 `"0"` / `"1"` 等示例值。
 - 人名必须解析成 user key，同名时让用户确认。
 - 关联字段必须写工作项 ID。
+- 实例角色写 `role_owners`；不写 `current_status_operator`，不把角色语义降级成 `owner`。
 - 隐藏/条件可见字段不要编造占位值；只有 preflight 或 create 明确要求时再让用户提供真实值。
 - 不可 API 写入字段直接告知，不绕路。
 

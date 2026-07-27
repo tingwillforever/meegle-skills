@@ -42,7 +42,7 @@ Use this file to choose the default-safe command path.
 | `workhour list-schedule` | ❌ 不支持 | MCP 无对应工具 |
 | `attachment upload-file` | ✅ 支持 | 按 MCP 实际工具公开；适合富文本图片、通用文件上传 |
 | `attachment upload` | ✅ 支持 | 按 MCP 实际工具公开；直接上传并挂到工作项附件字段 |
-| `attachment download` | ✅ 支持 | |
+| `attachment download` | ✅ 支持 | 通过鉴权 HTTP stream 原子写入本地文件；支持 `--output` / `--output-dir` / `--force` |
 | `attachment delete` | ✅ 支持 | destructive；需要 `--confirm`，仅在用户明确要求删除附件时使用 |
 | `comment add` | ✅ 支持 | |
 | `comment list` | ✅ 支持 | |

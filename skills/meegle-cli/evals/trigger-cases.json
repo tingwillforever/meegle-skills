@@ -1,5 +1,5 @@
 {
-  "skill_name": "meegle",
+  "skill_name": "meegle-cli",
   "cases": [
     {
       "id": "meegle-positive-workitem-001",
@@ -12,6 +12,12 @@
       "type": "positive",
       "prompt": "查看飞书项目里的固定视图数据",
       "required_terms": ["视图", "飞书项目"]
+    },
+    {
+      "id": "meegle-positive-instance-role-001",
+      "type": "positive",
+      "prompt": "创建迭代时把研发项目经理指定为郭松",
+      "required_terms": ["迭代", "研发项目经理"]
     },
     {
       "id": "meegle-negative-plugin-001",

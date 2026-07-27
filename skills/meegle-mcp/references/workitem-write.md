@@ -16,6 +16,7 @@
 
 1. `meegle.space.types` 确认 `work_item_type_key`
 2. `meegle.workitem.meta` 读取字段与 options
+   - 用户指定实例角色时，另调用一次 `meegle.config.flowRole.list`
 3. `meegle.workitem.createPreflight` 读取有效必填
 4. `meegle.workitem.create`
 5. 用 `meegle.workitem.get` 做结果核验
@@ -27,6 +28,7 @@
 - `createPreflight` 是有效必填事实源
 - 字段 option value 必须来自元数据，不要猜 label
 - `createPreflight` 不是字段白名单；用户明确要求的可选字段仍要保留到 create payload
+- 处理人、报告人、项目经理等实例角色按 [role-assignment.md](role-assignment.md) 写 `role_owners`
 - 批量创建必须串行执行，并逐个 readback
 
 ## 更新
@@ -34,7 +36,7 @@
 默认顺序：
 
 1. `meegle.workitem.get`
-2. `meegle.workitem.meta`
+2. 普通字段用 `meegle.workitem.meta`；实例角色用 `meegle.config.flowRole.list`
 3. `meegle.workitem.update`
 4. 必要时 `meegle.workitem.get` readback
 
@@ -51,7 +53,7 @@
 
 更新默认是覆盖语义。用户说“追加 / 再加 / 补充”时，必须先读取旧值、合并、去重，再整体写回；不要把追加误做覆盖。
 
-不可写字段和字段 shape 规则见 [field-value-format.md](field-value-format.md)。
+实例角色规则见 [role-assignment.md](role-assignment.md)；其他不可写字段和字段 shape 见 [field-value-format.md](field-value-format.md)。
 
 ## 中止 / 恢复 / 冻结
 

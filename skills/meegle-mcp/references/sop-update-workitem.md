@@ -19,10 +19,9 @@
 1. `meegle.workitem.get`
    - 确认目标工作项存在。
    - 追加类更新读取旧值。
-2. `meegle.workitem.meta`
-   - 映射字段 key、字段类型、options。
+2. 普通字段调用 `meegle.workitem.meta` 映射字段 key、字段类型和 options；角色-only 更新调用一次 `meegle.config.flowRole.list`，按 [role-assignment.md](role-assignment.md) 解析。
 3. 构造更新 payload。
-   - 构造字段值前读 [field-value-format.md](field-value-format.md)。
+   - 角色-only 字段读 [role-assignment.md](role-assignment.md)；其他字段值读 [field-value-format.md](field-value-format.md)。
    - 关联字段名称转 ID 时读 [field-value-extras.md](field-value-extras.md)。
 4. `meegle.workitem.update`
 5. 必要时 `meegle.workitem.get` readback。
@@ -57,7 +56,7 @@
 
 ## 边界
 
-- 角色字段、投票字段、计算字段、复合明细字段默认不可写。
+- 实例角色通过 `role_owners` 可写；`current_status_operator` 不可写。节点 owner / workflow role 不属于本 SOP。
 - 模板切换属于高风险操作，必须主动确认。
 - 关联字段禁止写入当前工作项自身 ID。
 - 节点表单字段不走工作项更新，切到节点 SOP。
