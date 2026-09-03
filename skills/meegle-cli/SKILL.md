@@ -13,6 +13,29 @@ description: |
 1. 使用已安装的 `meegle` CLI。
 2. 通过 remote MCP Server + SSO 登录访问私有部署。
 
+## 安装包更新与提醒
+
+`meegle update` 只支持 npm 安装路径，会执行：
+
+```bash
+npm update -g @tingwillforever/meegle-cli
+```
+
+直接运行的裸 Go 二进制不会自我替换。npm launcher 在普通命令启动时会按 24 小时
+节流规则后台检查 npm latest；新版本提醒只写 `stderr`，状态保存在
+`~/.meegle/update-state.json`，检查失败静默且不应阻塞业务命令。若脚本或 Agent
+需要稳定的 JSON/NDJSON `stdout`，可设置 `MEEGLE_CLI_NO_UPDATE_NOTIFIER=1` 关闭
+自动检查和提醒；该变量不影响显式 `meegle update`。
+
+如果当前 `meegle` 是手工安装的裸 Go 二进制，并且普通 npm 安装因同名 bin 文件报
+`EEXIST`，只需执行一次：
+
+```bash
+npm install -g --force @tingwillforever/meegle-cli
+```
+
+迁移后再使用 `meegle update`；不要把裸 Go 二进制和 npm launcher 混装在同一个 bin 路径。
+
 `meegle doctor` 只在按需诊断场景使用：用户主动要求诊断、登录/配置异常、业务命令报错但难以定位，或 `inspect` / 执行结果显示命令面疑似漂移、`runtime_source != live`。不要把 `doctor` 当作业务命令固定前置；诊断细节见 [references/runtime-private-remote-mcp.md](references/runtime-private-remote-mcp.md)。
 
 ## Skill 执行合同
@@ -27,7 +50,7 @@ description: |
 - 读路径成本预算：同一工作项类型最多一次 `meta-fields`；同一展示页最多一次 `user query`；每个业务目标最终查询只执行一次。最终查询成功后，只能本地映射、裁剪、排序和格式化。
 - 默认展示页执行模式：业务命令只负责取数据；最终回答直接基于命令返回 JSON 手工整理。不要为了状态/负责人展示再发本地格式化命令。默认展示不能只列 `ID + 名称`；必须展示 `ID`、`名称`、`当前状态`、`当前负责人`、`创建时间` 五列。
 - 状态 / 枚举 label 映射执行模式：`meta-fields` 返回后，直接从当前命令返回中读取所需 `options[]`；不要再运行第二条 `meta-fields`，不要把 `meta-fields` 重定向到临时文件，也不要用 `jq` / `rg` / `grep` / `sed` / `head` 等本地解析命令重新抽取同一份元数据。需要精确状态 label 且 `meta-fields` 输出可能很大时，必须在第一条且唯一一条 `meta-fields` 上直接接 Python JSON reducer；不要先跑普通 `meta-fields`，再跑 `meta-fields | python3`。这是一次业务读取后的本地裁剪，不是第二次元数据查询。
-- 工作项字段位置硬边界：可直接按顶层读取的稳定字段只包括 `id`、`name`、`current_nodes`、`work_item_status`、`created_at`、`updated_at`、`created_by`、`updated_by`、`deleted_at`、`deleted_by`、`work_item_type_key`、`project_key`、`simple_name`、`pattern`、`sub_stage`、`template_id`、`template_type`，以及 `fields` 容器本身。除此之外，`current_status_operator`、`priority`、`business`、`owner`、`watchers`、`role_owners`、`description`、`template`、`field_*` 等业务字段一律按 `fields[]` 中的 `field_key` / `field_alias` 读取；不要因为 `--select` 或样例 payload 把业务字段当作顶层字段。
+- 工作项字段位置硬边界：可直接按顶层读取的稳定字段只包括 `id`、`name`、`current_nodes`、`work_item_status`、`created_at`、`updated_at`、`created_by`、`updated_by`、`deleted_at`、`deleted_by`、`work_item_type_key`、`project_key`、`simple_name`、`pattern`、`sub_stage`、`template_id`、`template_type`，以及 `fields` 容器本身。稳定顶层字段还包括 `images`（富文本图片 uuid 摘要，`[{field_key, images:[{uuid}]}]`；仅 `workitem get` 返回且随 server 版本存在，见 workitem.md「富文本与描述图片」）。除此之外，`current_status_operator`、`priority`、`business`、`owner`、`watchers`、`role_owners`、`description`、`template`、`field_*` 等业务字段一律按 `fields[]` 中的 `field_key` / `field_alias` 读取；不要因为 `--select` 或样例 payload 把业务字段当作顶层字段。
 - 默认展示回答前 gate：如果本轮已读 `meta-fields`，最终回答里的“当前状态”必须先用 `work_item_status.options[]` 映射，不能展示 raw `state_key`；`current_status_operator` 是工作项字段，按 `fields[]` 里的 `field_key` / `field_alias` 读取，不要当作稳定顶层字段；如果 `search-filter` 当前页没返回负责人但已拿到 ID，先对当前页 ID 用一次 `workitem get --fields '["current_status_operator"]'` 补取；如果负责人只有 raw `user_key` 且用户未要求 raw / 不回填，必须先执行一次 `user query --user-keys ...` 回填；`created_at` / `updated_at` 是毫秒时间戳，默认展示可用一次本地 `node` / `python3` 转 `Asia/Shanghai`，不要心算。未完成状态、负责人、创建时间三类展示字段时，不要输出最终列表或摘要。
 - 业务命令和本地格式化分开执行。不要把 `meegle ...` 与复杂 `jq` / shell 管道串成一个命令；本地格式化失败不应污染业务命令结果。默认展示页不要把任何 `meegle` 业务命令重定向到 `/tmp`，也不要为本地处理重跑业务命令。
 

@@ -68,8 +68,10 @@
 
 - **简单入参**：`string`（仅纯文本时）
 - **完整入参**：结构体数组（详见富文本 reference）
-- **出参（默认）**：`string`
-- **出参（带 expand 参数）**：结构体 `{doc, doc_text, doc_html, is_empty}`
+- **出参（`workitem get` 默认）**：`fields[].field_value` 为 `string`（纯文本，描述中图片显示为 `[图片]` 占位）；**同时工作项顶层带 `images` 数组**：`[{ field_key, images: [{ uuid }] }]`，uuid 是嵌图的多文本字段里图片的下载主键（配 `attachment download` 取原图）
+- **出参（仅显式 `--expand '{"need_multi_text":true}'` 时）**：raw 富文本结构 `{doc, doc_text, doc_html, is_empty}` 随 `multi_texts` 返回（不裁剪，payload 较大）
+
+默认取图不传 expand：`workitem get` 返回即带 `images`。raw doc/doc_html 只在确实需要原始富文本时才用显式 expand 获取。
 
 简单示例：
 ```json

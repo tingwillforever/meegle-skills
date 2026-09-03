@@ -608,3 +608,56 @@ meegle workitem meta-create-fields \
 ```
 
 从第 3 条返回 JSON 中找到 `field_key == "priority"` 的字段，再读取它的 `options[]`。
+
+---
+
+## 富文本与描述图片（workitem get 默认返回 images）
+
+`fields[]` 里的 `multi_text` 字段默认只给纯文本，描述中的图片显示为 `[图片]` 占位。`workitem get` **不需要任何 expand 参数**，返回的工作项对象自带顶层 `images` 摘要（服务端已默认取回富文本并裁剪为图片清单，不返回 doc/doc_html 大段原始富文本）：
+
+```json
+{
+  "id": 20655077,
+  "fields": [ /* description.field_value 仍是纯文本字符串 */ ],
+  "images": [
+    { "field_key": "description",
+      "images": [ { "uuid": "0814BD6E-81DA-4333-A6CC-5B9170DD2E8F" } ] }
+  ]
+}
+```
+
+取图流程（两步，均为现有命令）：
+
+```bash
+# 1. get 默认返回已含 images（无需 --expand）
+meegle workitem get --work-item-ids 20655077 --work-item-type-key 67c7c0e46f6789d587d7ab5e
+
+# 2. 用 images[].uuid 下载原图
+meegle attachment download --work-item-id 20655077 \
+  --work-item-type-key 67c7c0e46f6789d587d7ab5e \
+  --uuid 0814BD6E-81DA-4333-A6CC-5B9170DD2E8F --output screenshot.png
+```
+
+要点：
+
+- `uuid` 是下载主键；`src`（如出现在任何 raw 输出里）是网页展示 URL，需浏览器登录会话，程序化取图一律走 `uuid`。
+- 只有真正嵌图的多文本字段会出现在 `images` 里；无图工作项该数组为空。
+- **不要**为了看图给 `workitem get` 传 `--expand '{"need_multi_text":true}'`——那会返回 raw doc/doc_html 大 payload，默认已不需要。仅当你确实要原始富文本结构时才显式传该参数。
+
+### 分层默认：元数据人人可见，图片按任务类下载
+
+- **协议层（`workitem get` 返回）**：默认只带 uuid 清单（`images`），不带图片二进制——所有读取场景零额外流量。
+- **编排层（Agent 执行默认）**：
+  - **分析 / 修复 / 评审类任务**（读缺陷/需求详情需结合截图分析问题）：`workitem get` 返回的 `images` 非空时，**默认把该工作项的图片全部下载到本地**再分析：
+    ```bash
+    # 每个 images[].images[].uuid 一条；多图可并行发起（同一工作项的下载互不依赖）
+    meegle attachment download --work-item-id <id> \
+      --work-item-type-key <type_key> --uuid <uuid> --output desc-<n>.png
+    ```
+    下载完成后先读图（本地文件），再结合描述文字给出结论；不要把“图片占位 `[图片]`”当结论。
+  - **只读 / 列表 / 字段核对类任务**：不下载，回答时注明「描述含 N 张截图（uuid 可下载）」即可。
+- 图片下载走 plugin 鉴权，无需浏览器会话；产物为本地原图文件。
+
+### 生效前提与降级
+
+- 该能力依赖 meegle-mcp 新版（`workitem get` 默认返回 `images`）。若实际返回**没有** `images`（旧 server / 未发布），需要看图时只能用兜底路径：显式 `--expand '{"need_multi_text":true}'` 拉取富文本后从 `multi_texts[].field_value.doc` 的 image ops 中解析 `uuid`（payload 较大，仅兜底用），再 `attachment download`。
