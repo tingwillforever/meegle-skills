@@ -1,5 +1,24 @@
 # 工作项读路径合同
 
+## 目录
+
+- [读路径建模](#读路径建模)
+- [发现与复用](#发现与复用)
+- [内置维度枚举小页查询](#内置维度枚举小页查询)
+- [默认展示合同](#默认展示合同)
+- [可读化优先级](#可读化优先级)
+- [只读成本预算](#只读成本预算)
+- [工作项对象结构](#工作项对象结构)
+- [当前用户相关查询](#当前用户相关查询)
+- [字段 projection 与本地输出裁剪](#字段-projection-与本地输出裁剪)
+- [关联字段过滤](#关联字段过滤)
+- [上下文推断](#上下文推断)
+- [workitem meta-types](#workitem-meta-types)
+- [workitem meta-create-fields](#workitem-meta-create-fields)
+- [workitem create-preflight](#workitem-create-preflight)
+- [常见用法](#常见用法)
+- [富文本与描述图片（workitem get 默认返回 images）](#富文本与描述图片workitem-get-默认返回-images)
+
 本文件覆盖工作项读路径、类型/字段元数据、展示映射和只读成本预算。创建、更新、流转等写操作只在对应 SOP 中执行。
 
 ## 读路径建模
@@ -17,6 +36,19 @@
 - 筛选锚点用于缩小范围；关联字段过滤时，锚点工作项要先解析成数字 ID。
 - 状态、负责人、优先级、业务线、时间范围通常是过滤条件，不要误判成查询主体。
 - 字段 key、状态 value、枚举 option value 只来自同一类型的 `workitem meta-fields`；type key 只来自 `workitem meta-types`。
+
+- “查询 A 的 B / A 下的 B / 关联到 A 的 B”通常以 B 为主体、A 为锚点。例：某项目下待讨论缺陷 → 主体=缺陷，锚点=项目，条件=待讨论。
+- 先决定主体再选命令：基础名称/时间/状态/优先级/tag/业务线/相关用户等内置维度用 `search-filter`；自定义/关联字段、严格人员语义、复杂 AND/OR 用 `search-by-params`。两者都可表达时优先前者；服务端内部改写不改变此职责边界。
+- 非工作项主体（视图、评论、子任务、流程、发布/部署）进入对应 reference，不套工作项元数据路径；命令能力不确定时按 [cli-guide.md](cli-guide.md#命令发现) 发现。
+
+## 发现与复用
+
+- `project_key` 即空间 key；已知 `project_key` / `simple_name` 直接传入，未指定时优先当前登录 profile / `auth whoami` 暴露的默认 key。只有中文名称、多空间无法判定或命令明确要求不同标识（如 UUID）时才用空间发现，不固定 `space list` / `space detail`。
+- type key 必须来自 `meta-types`，精确/模糊匹配规则见 [workitem meta-types](#workitem-meta-types)。URL 的 api_name 必须经同空间 `meta-types` 映射，不能直接试探业务命令。
+- 字段 key、状态/枚举 value 从主体类型的 `meta-fields` 获取；查询元数据不以 `meta-create-fields` 替代，创建/写入则服从 SOP 的目标元数据/preflight。
+- 只复用**同一任务、同 profile/账号/空间/类型**已取得且仍适用的证据，不复用历史 case 或跨类型字典。profile、账号、空间、类型改变，或观察到 schema 过期/漂移时，重新读取相应权威证据；不会因此取消 URL type 映射或写前/写后核验。
+- 不缓存授权结论，已知空间/元数据不等于有权写入。权限硬停优先于发现、fallback 和恢复，见 [error-handling.md](error-handling.md#数据权限硬停错误)。
+- `inspect`、只读 `--dry-run` 条件只在 [cli-guide.md](cli-guide.md#命令发现) 定义；以下示例是证据尚未获取时的顺序，不要求同 scope 重复发现。
 
 ## 内置维度枚举小页查询
 
@@ -103,16 +135,16 @@ meegle workitem get \
 状态必须可读，但不得为了展示无限补查：
 
 1. 若本轮已读取同一工作项类型的 `meta-fields`，复用其中 `field_key == "work_item_status"` 的 `options[]` 建立 `value -> label` 映射。
-2. 若未读取 `meta-fields` 且查询结果包含 `current_nodes[].name`，直接用节点名作为“当前状态/当前阶段”。
+2. 若状态字典缺失或无法匹配，保留原始状态值并标注“状态未映射”；`current_nodes[].name` 可单列“当前节点”，不能冒充状态 label。
 3. 若以上都不可用，展示 raw `work_item_status.state_key` / value，并标注“原始状态值”。
 
-只要本轮已读到 `work_item_status.options[]`，最终展示状态必须使用 `options[].value -> options[].label` 映射，不能再用 `current_nodes[].name` 覆盖，也不能展示 raw `started`、`In Progress`、`tmrqE6oMg`、`-KFJXzaWr` 等值。`current_nodes[].name` 只能在未读取 `meta-fields` 且结果确实有节点名时作为兜底。
+只要本轮已读到 `work_item_status.options[]`，最终展示状态必须使用 `options[].value -> options[].label` 映射，不能再用 `current_nodes[].name` 覆盖，也不能展示 raw `started`、`In Progress`、`tmrqE6oMg`、`-KFJXzaWr` 等值。无法匹配的状态标为未知/未映射；节点名单列，不覆盖状态。
 
-`current_nodes=[]` 不代表状态不可读。对状态流工作项，如果已读 `meta-fields` 但无法把 `state_key` 映射成 label，回答前先检查是否取错工作项类型、是否裁剪掉 `work_item_status.options[]`，或是否读错字段；不要直接输出最终列表。
+`current_nodes=[]` 不代表状态不可读。对状态流工作项，如果已读 `meta-fields` 但无法把 `state_key` 映射成 label，回答前先检查是否取错工作项类型、是否裁剪掉 `work_item_status.options[]`，或是否读错字段；核对后仍无法匹配则明确标注“状态未映射”，不得猜测。
 
 `meta-fields` 输出很大时，第一次就用 `--output-select field_key,field_name,field_alias,field_type_key,options` 窄读字段定义；仍然只算同一次权威元数据读取。不要先读完整元数据，再用第二条 `meta-fields | jq`、`meta-fields | rg`、`meta-fields | grep`、`meta-fields | sed`、`meta-fields | head` 或另一条 `meta-fields --output-select ...` 重新抽取。
 
-如果已知要找的状态 label / 字段名很具体，第一条且唯一一条 `meta-fields` 可以直接接 Python JSON reducer，避免终端显示大 JSON 后再补跑第二条业务命令。必须在第一次 `meta-fields` 就决定是否使用 reducer；不要先跑普通 `meta-fields`，再跑 `meta-fields | python3`。这个 reducer 只能裁剪当前这次 `meta-fields` 的返回，不得再次调用 `meegle`：
+需要精确状态 label 且输出可能很大时，必须在第一条且唯一一条 `meta-fields` 直接接 Python JSON reducer；其它已知具体字段名的场景可在首次读取时选用，避免终端显示大 JSON 后再补跑第二条业务命令。必须在第一次 `meta-fields` 就决定是否使用 reducer；不要先跑普通 `meta-fields`，再跑 `meta-fields | python3`。这个 reducer 只能裁剪当前这次 `meta-fields` 的返回，不得再次调用 `meegle`：
 
 ```bash
 meegle workitem meta-fields \
@@ -192,6 +224,8 @@ for (const t of ts) {
 
 ## 只读成本预算
 
+以下“一次”按同任务、同 scope、同展示页且证据仍适用计数（见 [发现与复用](#发现与复用)），不是全局缓存或权限缓存。禁止的是为相同结果重新查询/格式化，不禁止用户明确要求的分页、当前页必要字段补取或 [图片降级](#生效前提与降级)。若输出截断，先继续读取宿主已保留的本次输出；仍无法取得完整证据时按 [error-handling.md](error-handling.md) 披露/诊断，不把截断当业务失败盲重试，也不声称已完成。此处不新增本地解析、落盘或 reducer 授权。
+
 - 同一业务目标最终列表查询只执行一次：`search-filter`、`search-by-params`、`view items -> workitem get` 成功后，只能本地映射、裁剪、排序和格式化。
 - 内置维度枚举小页查询按 bucket 计数：同一 bucket 成功一次后只能本地整理；不同维度值各取 N 条时，可以各执行一条 `search-filter --page-size N`，但不要再对任一 bucket 做 probe、fallback 或扩大分页。
 - 工作项列表查询若使用本地 `--output-select`，且任务关心总量、分布或分页整体视角，直接读取返回里的 `pagination.total,pagination.page_num,pagination.page_size`。若需要同时显式约束记录字段和分页字段，可以继续写 `data.<field>` 与 `pagination.xxx` 的组合路径。
@@ -199,7 +233,7 @@ for (const t of ts) {
 - 若默认展示页的列表结果缺少 `fields[]` 中的 `current_status_operator`，允许对当前页 ID 执行一次 `workitem get --fields '["current_status_operator"]'` 补取负责人字段；这不是第二次同条件列表查询，禁止扩大到全量分页。
 - 同一展示页最多一次 `user query`，且仅用于当前页人员 raw key 回填。
 - 最终查询成功后，回答前必须执行本地 gate：`当前状态` 没有可读 label 时先从已读 `meta-fields` 映射；`当前负责人` 缺失但可通过当前页 ID 补 `fields[]` 时先补 `workitem get`；`当前负责人` 只有 raw user_key 时先做一次当前页 `user query`。这些 gate 不属于重复最终列表查询。
-- 普通只读查询默认不用 `--dry-run`，不要先跑 probe / sample query 再跑正式查询。
+- 普通只读查询默认不用 `--dry-run`；复杂新 shape、时间边界、排障按 [cli-guide.md](cli-guide.md#命令发现) 预览，不先跑 probe / sample query。
 - 默认 `10` 条展示页通常直接从命令返回 JSON 中整理表格；但 `created_at` / `updated_at` 毫秒时间戳转换可以用一次本地 `node` / `python3`，不要心算。
 - 大型 `meta-fields` 是例外：需要精确状态 / 枚举 option 时，可以在唯一一次 `meta-fields` 后接 Python JSON reducer 缩小输出；但 reducer 不得再次调用 `meegle`，也不得成为第二条 `meta-fields`。
 - 业务 `meegle` 命令与本地 `jq` / shell 格式化分开执行。不要把取数和格式化写进同一个 shell。默认展示页不要把 `meegle` 业务命令重定向到 `/tmp`；若非默认展示场景确实要本地处理，只能处理已有业务结果，不要重跑业务命令。
@@ -220,9 +254,7 @@ for (const t of ts) {
 
 查询/过滤/展示映射默认使用 `workitem meta-fields`。`workitem meta-create-fields` 是创建页元数据，只在创建工作项、字段 shape、模板/枚举或创建 API 报错自愈时使用；不要用它代替查询字段配置。创建时有效必填字段优先看 `workitem create-preflight`，不要直接把 raw `meta-create-fields.is_required == 1` 当成必须填写的最终清单。
 
-`project_key` 即空间 key。用户未指定空间时，优先使用当前登录 profile / `auth whoami` 暴露的默认空间 key；已知空间 key（例如 `cbg_product_develop`）时，直接作为 `--project-key` 使用。不要为了确认空间而先跑 `space list` / `space detail`；这类空间发现只适用于用户只给中文空间名、当前 profile 暴露多个空间且任务无法判定，或命令明确要求 UUID 的场景。
-
-所有需要 `--work-item-type-key` / `--work-item-type-keys` 的命令都必须传 `workitem meta-types` 返回的 UUID `type_key`。不要用 `story`、`story_new`、`issue`、`task`、`pdm`、`iteration` 等 api_name 作为试探值；这些名称只能用于从 `meta-types` 结果里匹配真实 type_key。
+空间/type 发现与复用统一见 [发现与复用](#发现与复用)。
 
 ---
 
@@ -237,7 +269,7 @@ for (const t of ts) {
 | `id` | 工作项 ID |
 | `name` | 标题（即工作项名称） |
 | `current_nodes` | 当前所在节点数组，可能为空 `[]`；每项含 `id`、`name`、`owners` |
-| `work_item_status` | 当前状态对象，含 `state_key`（如 `"started"`、`"Finished"`）；**无 display name 字段**。展示给用户时按上方状态可读化优先级处理：复用已读 `meta-fields` 的 `options[]`，否则优先 `current_nodes[].name`，再失败才展示 raw。 |
+| `work_item_status` | 当前状态对象，含 `state_key`（如 `"started"`、`"Finished"`）；**无 display name 字段**。展示给用户时按上方状态可读化优先级处理：复用已读 `meta-fields` 的 `options[]`，未匹配时标注“状态未映射”；`current_nodes[].name` 仅单列当前节点。 |
 | `created_at` | 创建时间（毫秒时间戳） |
 | `updated_at` | 更新时间（毫秒时间戳） |
 | `created_by` | 创建人 user_key |
@@ -252,6 +284,7 @@ for (const t of ts) {
 | `template_id` | 模板 ID |
 | `template_type` | 模板类型 |
 | `fields` | 业务字段容器数组，不是业务字段本身 |
+| `images` | 仅 `workitem get` 随 server 版本返回的富文本图片 uuid 摘要，结构/任务分流/旧版降级见 [富文本与描述图片](#富文本与描述图片workitem-get-默认返回-images) |
 
 **`fields[]` 业务字段**：通过 `field_alias` 或 `field_key` 访问。包括但不限于 `current_status_operator`、`priority`、`business`、`owner`、`watchers`、`role_owners`、`description`、`template`、`field_*`、截止日期、关联字段、枚举字段等。
 
@@ -259,27 +292,7 @@ for (const t of ts) {
 
 ### 状态中文名映射
 
-查询结果里的 `work_item_status.state_key` 不是最终展示文案。需要中文状态名时，读取同一工作项类型的字段元数据一次：
-
-```bash
-meegle workitem meta-fields \
-  --project-key PROJ \
-  --work-item-type-key TYPE_KEY \
-  --output-select field_key,field_name,field_alias,field_type_key,options \
-  --format json
-```
-
-从这一次返回里找到 `field_key == "work_item_status"` 的 `options[]`，建立 `value → label` 映射，然后把查询结果里的 `state_key` / `value` 回填为 `label`。不要为了展示状态中文名调用 `workflow list-state-transitions`；workflow 命令服务于状态流转，不是列表展示 label 的默认路径。
-
-但在普通列表查询里，如果结果已经包含 `current_nodes[].name`，默认直接用节点名作为“状态/当前阶段”展示。对大多数“标题、状态、负责人”类任务，这已经足够且更省命令；不要为了把节点名再映射成 `work_item_status` label，额外补一轮字段元数据提取。
-
-同一类型的一次展示任务里，`meta-fields` 默认只读一次。读取完整字段元数据后，应在本地同时提取：
-
-- `work_item_status.options[]` 的 `value → label`
-- 负责人 / 关联字段的 `field_key`
-- 枚举字段需要的 `options[].value`
-
-不要为了单独拿 `work_item_status.options` 或单独确认负责人字段，再执行第二次 `meta-fields`。需要多次提取时，直接从当前命令返回内容中读取；默认展示页不要再发本地 `jq` / `rg` / `grep` / `sed` / `head` 命令，也不要创建 `/tmp/meegle_*` 文件做元数据二次提取。
+完整规则见 [可读化优先级](#可读化优先级)：只复用同类型 `work_item_status.options[]`；未匹配标注“状态未映射”，节点只能单列，不能替代状态。不要用 `workflow list-state-transitions` 查询列表展示 label。
 
 ### 示例：待讨论缺陷 + 中文状态名 + 原始负责人 user_key
 
@@ -322,28 +335,12 @@ meegle workitem search-by-params \
 
 ### 用户可读展示
 
-对用户展示工作项查询结果时，默认做语义化回填，不直接输出原始 key：
+状态、人员、毫秒时间、前 10 条和分页披露统一见 [默认展示合同](#默认展示合同) 与 [可读化优先级](#可读化优先级)，不在此重复维护。其它字段：
 
-- `work_item_status.state_key`：已读 `meta-fields` 时复用 `work_item_status.options[]` 建立 `value → label` 映射；只有排障时才附带原始 `state_key`
-- `current_nodes[]`：未做状态 options 映射时，直接显示节点 `name`
-- `select` / `multi-select` / `tree-select` 等枚举字段：优先显示 `label`，不要把 `value` 直接展示给用户
-- `business` / 业务线 ID：`meegle auth whoami --format json` 的 `business_line_names` 只表示业务线只读 fallback 上下文，可用于展示参考但不代表普通工作项通用可见范围；需要完整映射时用 `meegle space business-lines` 返回名称回填
-- 角色 key：用 `meegle workitem meta-roles --project-key PROJ --work-item-type-key TYPE_KEY --format json` 回填角色名称
-- 人员 user_key：最终展示页只有 raw key 且用户未要求 raw / 不回填时，最多一次 `meegle user query --user-keys '["USER_KEY"]' --format json` 批量回填当前页唯一 key；用户要求 raw 或回填失败时，展示原始 user_key。默认的人名/关键词解析仍优先 `meegle user search --query "姓名" --project-key PROJ --format json`。`user query` 的公开定位以 [verified-command-surface.md](verified-command-surface.md) 为准；若上下文明确是“空间下团队成员”，再用 `meegle team list-members --project-key PROJ --format json` 查看团队列表及其 `user_keys` / `administrators`，但不要把它当成空间成员全集
-
-如果一时拿不到映射，先明确标注“原始 key”，不要把它误写成中文语义。
-
-普通列表展示默认只取 `10` 条并直接输出，不要为了“标题、状态、负责人”分页拉全量、导出文件或批量解析所有负责人。只有用户明确要求完整导出/全量统计时，才分页和写临时文件。
-
-如果第一次最终查询已经返回了默认展示页且带有 `pagination.total`，正确回答方式是：
-
-- 直接展示当前页结果
-- 明确说明“共命中 N 条，当前先展示前 10 条”
-- 若用户需要，再继续列更多结果
-
-不要因为看到了 `pagination.total=32`，就立刻把同条件查询重跑成更大 `page-size`，也不要“再跑一遍只是为了本地裁成三列”。
-
-不要在普通列表展示中把 `user query` 当作无条件固定路径。默认先展示字段中已有 label/name；如果当前页只有 user_key，且用户未要求 raw / 不回填，才对当前展示页小批量调用一次 user 查询。不要因为总数很大而跨页预取人员。
+- `select` / `multi-select` / `tree-select` 等优先展示 label，未取得映射明确标注原始 key。
+- 业务线名称可参考 `auth whoami` 的 `business_line_names`（仅只读 fallback 上下文，不代表普通工作项可见范围）；完整名称映射来自 `space business-lines`。
+- 角色名称来自 `workitem meta-roles --project-key PROJ --work-item-type-key TYPE_KEY`。
+- 人名/关键词解析优先 `user search --query "姓名" --project-key PROJ`；精确 user_key 回填见上方 gate 与 [verified-command-surface.md](verified-command-surface.md)。只有任务明确为“空间下团队成员”才用 `team list-members`；团队列表及其 `user_keys` / `administrators` 不是空间成员全集，不用于扫描所有负责人。
 
 ---
 
@@ -375,11 +372,11 @@ meegle workitem search-by-params \
   --format json
 ```
 
-其中 `OWNER_FIELD_KEY` 和优先级枚举 value 来自同一次 `meta-fields`。这个路径默认直接用最终查询结果里的 `current_nodes[].name` 展示状态；不要为了状态展示再去抽第二次 `work_item_status.options[]`。不要先试 `search-filter --user-keys` 再自愈；它覆盖 creator / follower / role owner，不能表达严格负责人字段语义。
+其中 `OWNER_FIELD_KEY` 和优先级枚举 value 来自同一次 `meta-fields`。这个路径复用同一次 `meta-fields` 的 `work_item_status.options[]` 映射状态；无法匹配则标为未映射，节点名不得覆盖状态，也不要重复抽取同一元数据。不要先试 `search-filter --user-keys` 再自愈；它覆盖 creator / follower / role owner，不能表达严格负责人字段语义。
 
-这是只读路径：默认直接执行真实查询，不要先对同一条 `search-by-params` 做 `--dry-run` 再执行一次真实请求；除非当前任务明确是排障或命令 shape 不确定。
+这是只读路径，已验证的普通字段条件直接执行；新复杂嵌套条件、时间边界、shape 不确定或排障时按 [cli-guide.md](cli-guide.md#命令发现) 预览，不因“我负责”固定 dry-run。
 
-同一 case 中不要先跑一个 `page-size 1` / sample probe 查询，再跑第二个正式分页查询。负责人字段、状态字段和优先级条件都应该在一次最终查询中完成；本地需要的表格格式化，直接接在这次最终查询输出后处理。
+同一 case 中不要先跑一个 `page-size 1` / sample probe 查询，再跑第二个正式分页查询。负责人字段、状态字段和优先级条件都应该在一次最终查询中完成；表格直接基于这次返回 JSON 手工整理，不与业务命令串接本地格式化管道。
 
 对 “我负责的高优先级产品需求，只要标题、状态和负责人” 这类查询，推荐的最小序列是：
 
@@ -390,7 +387,7 @@ meegle workitem search-by-params \
 
 规则补充：
 
-- 第 3 步的同一份 `meta-fields` 至少提取负责人字段 key、优先级 option value；只有当前查询结果无法直接用 `current_nodes[].name` 展示状态时，才额外从同一份结果里取状态 `value → label` 映射
+- 第 3 步的同一份 `meta-fields` 至少提取负责人字段 key、优先级 option value；同时从同一份结果取状态 `value → label` 映射，优先于节点名
 - 第 4 步直接作为最终查询；默认用 `--select` 一次性声明需要返回的顶层字段和自定义字段，不要同时传 `--fields`；不要先跑 `page-size 20` 再缩成 `page-size 10`
 - 不要再执行第二次 `search-by-params` 只为输出 Markdown 表格
 - 若需要展示总数，直接使用最终查询返回里的 `pagination.total`
@@ -417,7 +414,7 @@ meegle workitem search-by-params \
 规则：
 
 - 命令专属 flag 消歧先看 [cli-guide.md](cli-guide.md)：不要把 `--name`、`--work-item-type-key(s)`、`--work-item-id(s)`、`--select` / `--output-select` 在不同命令之间串用。
-- 准备使用 `--select` 时，先运行 `meegle inspect workitem.get --format json` 或 `meegle inspect workitem.search-by-params --format json`，确认 `projection.backend_select_supported == true`。
+- `--select` 仅用于已确认 `projection.backend_select_supported == true` 的命令；上述普通读路径已有已验证 contract 时不固定 inspect，不确定/漂移时按 [cli-guide.md](cli-guide.md#命令发现) 检查。
 - 在上述命令上，默认用 `--select` 表达产品化字段 projection；即使 live `inspect.parameters[]` 显示底层 `fields` 参数，也不要在普通展示路径改用 `--fields`。
 - 不要同时传 `--select` 与 `--fields`。如果已经选择 `--select`，需要 `fields[]` 业务字段时直接把字段 key 放进同一个 `--select` 列表，例如 `--select id,name,work_item_status,current_status_operator`；但读取位置仍按“稳定顶层字段 allowlist / `fields[]` 业务字段”判断，`current_status_operator` 不会因此变成顶层字段。
 - `workitem search-filter` 主要用于内置维度过滤；它不声明 backend projection，传 `--select` 会直接报错。如果只是想少展示字段，用 `--output-select`；若任务还关心总量或分布，默认直接读取返回里的 `pagination`。
@@ -429,6 +426,13 @@ meegle workitem search-by-params \
 ---
 
 ## 关联字段过滤
+
+**关联字段查询限制**：
+
+- `search-by-params` 支持通过 `workitem_related_select` / `work_item_related_select` 和 `workitem_related_multi_select` / `work_item_related_multi_select` 类型字段进行正向查询（以 live `field_type_key` 为准，查询字段值包含指定工作项 ID 的工作项）
+- **不支持** `work_item_related` 类型字段的搜索
+- 反向关联查询优先从父工作项读取关联字段再批量查询；若目标类型有指向父工作项的可搜索关联字段，可用 `search-by-params` 直接查。
+
 
 `workitem_related_select` / `work_item_related_select` 类型字段（如"所属项目"）在 `search-by-params` 中过滤时：
 
@@ -474,7 +478,7 @@ meegle workitem meta-fields \
 #                                                                         ↑ 数字，不加引号
 ```
 
-这同样是只读路径：默认直接执行最终 `search-by-params`，不要先跑一遍 `--dry-run`；如果已经唯一确认了锚点 ID 和关联字段 key，再做 dry-run 只会增加业务命令数和 wall-clock。
+已唯一确认锚点 ID、关联字段 key 且普通条件 shape 已验证时直接执行最终查询；复杂新 shape、时间边界和排障的预览条件仍按 [cli-guide.md](cli-guide.md#命令发现) 保留。
 
 如果锚点类型与字段 key 都已确定，推荐最终序列就是 4 步：
 
@@ -483,7 +487,7 @@ meegle workitem meta-fields \
 3. 主体 `meta-fields`
 4. 最终 `search-by-params`
 
-不要在这四步之外加入 probe query、全类型探测或额外格式检查。
+不要加入 probe query、全类型探测或为格式化重复查询；必要发现、展示补取、分页及诊断不受该示例步数限制。
 
 默认展示最终 `search-by-params` 应使用：
 
@@ -500,6 +504,20 @@ meegle workitem search-by-params \
 不要把这里的 `--select` 改成 `--fields`；不要把 `[ANCHOR_ID]` 改成标量 `ANCHOR_ID`。
 
 ---
+
+## 上下文推断
+
+当命令需要业务线、所属项目或产品型号/子平台但用户未指定时，按以下顺序推断：
+
+1. 若需要展示或回填业务线名称，可参考 `meegle auth whoami --format json` 的 `business_line_names`，但它只表示业务线只读 fallback 上下文，不代表普通工作项通用可见范围；若需要业务线 ID，用 `meegle space business-lines --project-key PROJ --format json` 按 `name` 匹配取 `id`
+2. `workitem meta-types --project-key <project_key>` 找 `api_name == pdm` 的条目，取其 `type_key`；若只需要当前授权摘要，优先看 `meegle auth whoami --format json`。若需要项目明细，适用 [当前用户相关查询](#当前用户相关查询)：当前用户参与/相关的项目，`workitem search-filter` 必须显式加 `--user-keys '["<meegle_user_key>"]'`；只有在要看空间内全量项目管理工作项时，才允许不带 `--user-keys`；若需要更严格的字段级人员语义或当前授权/接口契约不适合 `search-filter`，再改用 `workitem search-by-params`
+3. 同上找 `api_name == product_type` 的 `type_key`；再用 `workitem search-filter --work-item-type-keys '[<type_key>]'` 取产品型号/子平台，结果按业务线客户端过滤
+
+每步规则：
+- 单个结果 → 直接使用，不询问
+- 多个结果 → 编号列表呈现，等待用户选择；业务线多个时先选业务线，再用业务线 ID 过滤后续查询
+
+推断结果仅在当前任务相同适用上下文内复用，变化时按 [发现与复用](#发现与复用) 重新确认；不缓存权限。只有用户明确要求保存偏好，或当前环境明确提供可用 memory 工具时，才考虑持久化，避免无谓打断。
 
 ## workitem meta-types
 
@@ -630,7 +648,7 @@ meegle workitem meta-create-fields \
 
 ```bash
 # 1. get 默认返回已含 images（无需 --expand）
-meegle workitem get --work-item-ids 20655077 --work-item-type-key 67c7c0e46f6789d587d7ab5e
+meegle workitem get --work-item-ids '[20655077]' --work-item-type-key 67c7c0e46f6789d587d7ab5e
 
 # 2. 用 images[].uuid 下载原图
 meegle attachment download --work-item-id 20655077 \

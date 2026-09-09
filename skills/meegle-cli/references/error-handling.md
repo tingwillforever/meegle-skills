@@ -11,14 +11,26 @@ SKILL.md 主文件已经收录错误处理总则与熔断条件，本文件提�
 - 运行态：auth/config/profile 状态；只有登录、配置、命令面漂移或错误不足以定位时才运行 `meegle doctor --format json`。
 - 最小复现：能复现问题的最小 public CLI 命令。不要用隐藏 MCP 工具或 raw API 作为默认诊断路径。
 
-## 自愈规则（按报错特征匹配修复后重试）
+## 写入恢复与完成证据
+
+| 执行结果 | 处理 |
+|---|---|
+| 本地明确未发送 | 保持用户语义，按已核验 schema 修正后验证 |
+| 后端明确拒绝 | 先确认拒绝无副作用，再有界修正；不猜测类型轮试 |
+| 超时/断连/响应解析失败 | 结果未知，不盲目重写；只有本次 ID/关联证据可供只读核对，同名或未搜到同名不证明结果 |
+| 明确成功 | 回读同空间、同类型、同 ID 并逐项比对全部预期字段；exit code / err_code 0 不代表目标完成 |
+| 回读失败或值不匹配 | 报告已提交但未验证或部分完成，列出无法确认项/差异，不再次写入 |
+
+无已验证幂等保证且不能证明未落地时停止并请求用户决定。所有写入服从用户与宿主授权；API 可选不等于用户允许忽略，字段不可写时先说明，只有用户同意部分执行后才能省略并披露。追加必须写前读取、合并保留旧值（含非目标角色），不得覆盖未修改内容。权限硬停优先于所有恢复规则。
+
+## 自愈规则（先按执行结果分类，再核对契约）
 
 | 报错特征 | 自愈动作 |
 |---------|---------|
 | `field [X] is illegal`（workitem create / update）| **先怀疑 shape 不匹配**，查 [field-value-format.md](field-value-format.md) 重组 field_value，不要删字段绕过。仅 shape 正确后仍 illegal 时才考虑权限/契约问题 |
 | `Field Option Value Is Wrong`（err_code 20050）| shape 对了但 option_id 错。调 `meta-create-fields` 取真实 `options[].value`，**不要照搬官方文档示例的 `"0"`/`"1"`** |
-| `need STRING type, but got: LIST` / `MAP` | 仅适用于 `workitem update` 的少数旧契约或状态流字段；`workitem create` / `workflow transition` **走原生对象/数组**（详见 [field-value-format.md](field-value-format.md)） |
-| `cannot unmarshal object...` | 仅改变格式（数字↔字符串、单值↔数组、对象↔纯字符串），值不变 |
+| `need STRING type, but got: LIST` / `MAP` | 查 [field-value-format.md](field-value-format.md) 与当前契约；没有版本证据不启用 STRING fallback，不额外 stringify 内层字段 |
+| `cannot unmarshal object...` | 核对外层 CLI JSON 编码与内层字段类型；只在有契约依据且确认无副作用后有界修正 |
 | `不满足层级配置`（级联层级错误） | 查 `children` 树，展示末级叶子节点让用户选择 |
 | `invalid select option(s)`（枚举不合法） | 从 `possible values` 匹配；唯一匹配则修正重试，否则询问用户 |
 

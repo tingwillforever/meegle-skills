@@ -17,8 +17,5 @@
    - 唯一结果 → 直接取工作项 ID
    - 多个结果 → 列出所有匹配项（ID + 名称 + 状态）让用户确认
    - 零结果 → 提示用户"未找到名为 XXX 的工作项，请确认名称或直接提供 ID"
-4. **写入格式**：
-   - `workitem_related_select` → 传入单个 ID 字符串
-   - `workitem_related_multi_select` → 传入 stringified ID 数组
-   - 不同空间可能要求字符串或数字格式，遇类型校验失败立刻切换格式重试
+4. **写入格式**：唯一来源见 [field-value-format.md](field-value-format.md)。关联单选用原生 number，多选用原生 number[]；外层 CLI 参数 JSON 编码不改变内层类型。无当前目标契约证据时停止并披露，不因类型报错盲目切换字符串重试。
 5. **循环引用保护**：写入前必须排查当前工作项自身 ID，**禁止将自身 ID 写入关联字段**，否则会触发 `exists loop`（循环引用）报错。

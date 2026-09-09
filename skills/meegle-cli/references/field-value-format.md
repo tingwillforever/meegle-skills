@@ -4,9 +4,9 @@
 > 本文按 `field_type_key` 索引，给出 `field_value_pairs` / `update_fields` 写入时每个类型的**入参 shape + 完整条目示例 + 错误样式 + value 来源**。
 >
 > **🚨 强制约束**：
-> 1. 构造 `workitem create` / `workitem update` / `workflow transition --fields` / `workflow update-node --fields` 的 `field_value` 前，**必须先查本文档**找到对应 `field_type_key` 的 shape。
-> 2. **create / update / workflow node 字段契约完全一致**——官方文档原话：`Open API 统一了用户创建和查询的字段格式`。本文表格同时适用于这四个入口，不存在"create 用 A 形式、update 用 B 形式"的区分。实测验证见文末「偏差留痕」小节。
-> 3. **禁止凭经验、记忆或别处规则推断 shape**——尤其禁止把数组/对象 `JSON.stringify` 再传字符串。私有后端实测中该写法一律被 `field [...] is illegal` 拒绝（见文末偏差留痕）。
+> 1. 构造 `workitem create` / `workitem update` / `workflow transition --fields` / `workflow transition-state --fields` / `workflow update-node --fields` 的 `field_value` 前，**必须先查本文档**找到对应 `field_type_key` 的 shape。
+> 2. 本文是唯一字段格式索引，不代表当前所有入口/字段均可写。下表来自官方文档及历史记录；执行仍须核对当前目标元数据与 public descriptor，不能由 generic array/object schema 推断内层全部字段兼容。
+> 3. **禁止凭经验、记忆或别处规则推断 shape**——尤其禁止把数组/对象 `JSON.stringify` 再传字符串。历史记录中部分字段的该写法被 `field [...] is illegal` 拒绝（见文末偏差留痕）。
 > 4. 不确定字段类型时先调 `meegle workitem meta-create-fields --project-key PROJ --work-item-type-key TYPE --format json` 看 `field_type_key`。
 > 5. 不确定 select / radio 等枚举的合法 `value` 时也走同一个接口，从 `options[].value` 取真实 option_id（不是文档里示例的 `"0"`、`"1"`，那只是占位）。
 
@@ -374,9 +374,7 @@ shape 与 `select` 完全一致：
 }
 ```
 
-> ⚠️ **覆盖旧指引**：本仓库历史的 [field-value-extras.md](field-value-extras.md) 第 22-23 行写过"传单个 ID 字符串 / stringified ID 数组"，**与官方文档不符**，以本文为准——传原生 number / number[]。
->
-> 名称 → ID 转换流程（搜索 + 消歧 + 循环引用保护）依然参考 [field-value-extras.md](field-value-extras.md)。
+> 名称 → ID 转换（搜索、消歧与循环引用保护）见 [field-value-extras.md](field-value-extras.md)，字段 shape 只在本文维护。
 
 ### work_item_related_multi_select（多选关联工作项）
 
@@ -509,7 +507,7 @@ shape 与 `select` 完全一致：
 
 ## 不支持 API 写入的字段类型
 
-写入这些字段会被后端拒绝，**必须改走对应专用接口或页面操作**：
+以下字段不能作为通用字段默认写入；先说明限制并确认用户授权，再走已公开专用接口或页面，不能自动换路径：
 
 | 字段类型 | 处理方式 |
 |---|---|
@@ -549,7 +547,7 @@ upstream 公开版 SKILL.md 写过：
 | `date` 传 `"1780156800000"` 字符串 | ❌ illegal | ❌ illegal |
 | **`date` 传原生数字** | **✅** | **✅** |
 
-create 与 update 的字段契约**完全对称**——印证官方文档"Open API 统一了用户创建和查询的字段格式"的说法。
+以上是 2026-05-18 的历史记录，未在本轮重新业务写入验证，不证明当前所有类型、workflow 入口或租户契约对称。2026-09-09 只读 public inspect 返回 create/update 字段列表为 array<object>，没有内层字段 schema；当前字段级可写性仍需目标元数据/授权测试确认。
 
 ### 历史 skill 文档的 stringify 指引
 
@@ -563,8 +561,8 @@ create 与 update 的字段契约**完全对称**——印证官方文档"Open A
 
 | 后端报错片段 | 真实原因 | 修复 |
 |---|---|---|
-| `field [X] is illegal` | shape 错 | 查本文档对应 `field_type_key` 重新组装 |
+| `field [X] is illegal` | 可能是 shape、选项、权限或目标契约问题 | 核对目标类型与错误，保持用户字段，不猜测兼容格式 |
 | `Field Option Value Is Wrong` (err_code 20050) | shape 对了，但 option_id 用错（比如照搬文档示例 `"0"`）| 调 `meta-create-fields` 取真实 `options[].value` |
 | `当前选项值已失效` | 关联字段绑定的目标实例被管理员标失效 | 用 `search-by-params` 查目标类型当前生效实例，换 ID |
 | `Required Field Is Not Set` | meta `is_required=1` 字段缺值 | 补齐必填字段；优先级、模板等都属 meta 必填 |
-| `field [X]` 在 create 报 illegal，但同 X 在 update 能写 | 不太可能，先怀疑 shape | 仍然查本文档 |
+| `field [X]` 在 create / update 表现不同 | 当前目标契约待确认 | 停止无依据的类型切换，披露无法确认项 |

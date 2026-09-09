@@ -22,9 +22,9 @@ meegle inspect attachment.delete --format json
 
 `--file` 始终填写当前 CLI 客户端可读取的本机文件路径。安装版 CLI 会在本机读取该文件，并把文件内容发送给共用远端 MCP Server；普通用户和 Agent 不需要启动本地 MCP Server，也不要手工传 base64 或服务端本地路径。
 
-上传前可用 `--dry-run --format json` 预览 normalized request。附件上传的 dry-run 只展示本机路径、文件名、大小、内容类型和 `data-url-base64` 传输编码摘要，不输出文件内容或 base64 数据。
+上传前可用 `--dry-run --format json` 预览 normalized request。附件上传的 dry-run 只展示本机路径、文件名、大小、内容类型和传输方式，不输出文件内容或 base64 数据。新版 MCP Server 发布 `file_upload.transport=http_multipart` capability 后，CLI 会以 multipart 文件流上传，不再把文件编码为 JSON/base64。
 
-如果真实调用报远端 `ENOENT`，且错误里出现 `/var/folders/...`、`/Users/...`、`/tmp/...png` 等 CLI 本机路径，说明当前安装版 CLI 未包含本机文件物化修复，仍把本机路径交给远端 MCP 读取。此时先升级或重新构建安装当前源码版，再用 `--dry-run --format json` 确认输出里有 `file_transfer.encoding = "data-url-base64"`。
+如果服务端没有发布 multipart capability，CLI 会保留旧的 MCP JSON tool 兼容路径；大文件仍可能受到 JSON body 限制。遇到 413 时，应升级 MCP Server 与 CLI，使 `attachment.upload` manifest 含有 `file_upload.transport = "http_multipart"`。
 
 ---
 

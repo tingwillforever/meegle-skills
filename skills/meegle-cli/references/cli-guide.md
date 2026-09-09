@@ -1,16 +1,36 @@
 # CLI Guide
 
+## 目录
+
+- [命令形态](#命令形态)
+- [命令发现](#命令发现)
+- [历史别名与 `tool_name`](#历史别名与-tool_name)
+- [Flag 语义层](#flag-语义层)
+
 ## 命令形态
 
 ```bash
 meegle <resource> <method> [flags] --format json
 ```
 
+包维护命令例外：`meegle update` 是 npm-only 的本地升级入口，不访问 Meegle MCP；
+`meegle version`、`meegle --version`、`meegle help` 和 `meegle completion` 也不
+触发后台版本检查。自动更新提醒只写 `stderr`，需要纯结构化 `stdout` 时可设置
+`MEEGLE_CLI_NO_UPDATE_NOTIFIER=1`。
+
 默认优先使用 `--format json`，除非用户明确需要 table 或 ndjson。
 
 ## 命令发现
 
-参数 shape 不确定时，以 live CLI 为准：
+统一按以下条件发现，不将诊断变成固定业务前置：
+
+- **inspect**：参数/能力/projection 不确定、新复杂 shape、命令报错需诊断或 schema 过期/漂移时读取 live descriptor。已验证 public CLI contract 覆盖且当前上下文未变的普通读路径，不为展示固定追加 inspect；不从示例推导未知能力。
+- **只读 dry-run**：普通已知条件直接查询，不因分页/projection 固定预览；新复杂嵌套条件、时间边界、shape 不确定或明确排障时先预览 normalized request。
+- **写入/conditional/destructive**：仍按对应 SOP 保留命令面、risk/capability、用户授权、写前预览及写后核验；上述普通读豁免不适用于写。destructive 必须用户明确要求并带 `--confirm`；conditional warning 不等于已授权。
+- **证据范围**：仅同任务、同 profile/账号/空间/类型且未漂移的适用证据可复用；变化时重新确认相应权威证据，不缓存权限。空间与元数据发现见 [workitem.md](workitem.md#发现与复用)。
+- **doctor**：用户要求诊断、auth/config 异常、业务错误无法定位或 runtime/descriptor 漂移才调用，见 [runtime-private-remote-mcp.md](runtime-private-remote-mcp.md#on-demand-diagnostics)。
+
+需要发现时，以 live CLI 为准：
 
 ```bash
 meegle inspect
@@ -28,7 +48,7 @@ meegle inspect comment.add --format json
 - `runtime_source` / `snapshot_stale`
 - `deprecation.replacement`
 
-准备使用 `--select` 时，先看 `inspect --format json` 里的 projection metadata：
+能力尚未确认或发生漂移时，使用 `--select` 前读取 `inspect --format json` 的 projection metadata（普通已验证读路径复用适用 contract）：
 
 - `projection.backend_select_supported`
 - `projection.backend_request_path`
@@ -63,7 +83,7 @@ meegle inspect comment.add --format json
 
 ### 命令专属 flag 消歧
 
-不要把一个命令的合法 flag 泛化到另一个命令。构造命令前优先按 `inspect <resource>.<method> --format json` 的 `parameters[].flag` 校验；已知高混淆点如下：
+不要把一个命令的合法 flag 泛化到另一个命令。按已验证 contract 选 flag；未覆盖或漂移时用 `inspect <resource>.<method> --format json` 的 `parameters[].flag` 校验，触发条件见 [命令发现](#命令发现)。已知高混淆点如下：
 
 | 场景 | 正确命令 / flag | 禁止串用 | 原因 |
 |---|---|---|---|
@@ -120,7 +140,7 @@ meegle workitem search-filter \
 --params/-P < --set < 具体命令 flag
 ```
 
-涉及嵌套对象、时间范围、分页、projection 或写操作时，先加 `--dry-run`，检查输出里的 `.params`，确认预期字段已经进入后端请求。
+新复杂嵌套对象、时间边界、shape 不确定、明确排障或写操作时，先加 `--dry-run` 检查 `.params`；普通已验证分页/projection 不固定预览，见 [命令发现](#命令发现)。
 
 verified command 的 dry-run 如果发现明显未知顶层参数，现在会直接 fail fast，而不是继续输出看似正常的 payload。遇到这种情况时：
 
@@ -138,9 +158,9 @@ verified command 的 dry-run 如果发现明显未知顶层参数，现在会直
 | 减少后端返回字段 | `--select id,name,work_item_status` | 进入后端请求；当前首批支持 `workitem get`、`workitem search-by-params` |
 | 只减少本地展示字段 | `--output-select id,name,work_item_status` | 后端仍返回原始结果，CLI 在响应后裁剪展示 |
 
-判断某个命令能不能用 `--select`，不要凭经验猜；先看 `inspect --format json` 的 `projection.backend_select_supported`。
+判断 `--select` 能力不能猜：按 [命令发现](#命令发现) 使用已验证 contract 或必要时读取 `projection.backend_select_supported`。
 
-示例：支持 backend projection 的命令。
+示例：排障时预览支持 backend projection 的命令（不是普通读固定前置）。
 
 ```bash
 meegle workitem search-by-params \

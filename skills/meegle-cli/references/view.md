@@ -99,7 +99,7 @@ meegle view list \
 
 如果目标 `view_id` 不在首页，按页查询是允许的，但要保持有界：顺序查页，不要并发扫 1-10 页；命中目标页后立即停止。普通确认视图类型时不需要继续读取 items 或展开所有视图。
 
-推荐先执行：
+仅当 wrapper/projection 能力不确定或发生漂移时，按 [cli-guide.md](cli-guide.md#命令发现) 执行；普通已验证固定视图读路径不固定追加 inspect：
 
 ```bash
 meegle inspect view.items --format json

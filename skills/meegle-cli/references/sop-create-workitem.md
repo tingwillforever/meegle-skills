@@ -2,12 +2,12 @@
 
 > **CRITICAL** — 开始前先读 [`../SKILL.md`](../SKILL.md)（前置检查、授权流程、命令参数参考）和 [`error-handling.md`](error-handling.md)。
 
-本 SOP 用于在飞书项目中创建工作项（需求、任务、缺陷等），全程自动化执行。
+本 SOP 用于在飞书项目中创建工作项（需求、任务、缺陷等），在用户与宿主授权范围内执行，不替代更严格的确认要求。
 
 > 与上游 SaaS 版的关键差异（私有 cli）：
 > - **`role_owners` 可写，`current_status_operator` 不可写**：人员语义若本质上是实例角色（如处理人 / 项目经理 / 研发代表 / 测试代表），优先写 `role_owners`；`current_status_operator` 是系统根据当前流转单元引用的实例角色自动派生的字段，不能直接写。
 > - **按姓名查 userkey** 默认只用 `meegle user search --query "姓名" --project-key PROJ --format json`；若出现同名结果，展示候选 `email` / `user_key` 让用户确认。
-> - **模板 ID 是必填项**：创建时必须传 `--template-id`。
+> - **模板依据目标元数据/preflight**：当前 descriptor 的 `--template-id` 为可选；目标后端要求模板时必须提供已确认的模板，不凭此省略用户指定模板。
 
 ---
 
@@ -35,7 +35,7 @@
 
 ### STEP 2 — 确认空间和类型
 
-1. 用 `meegle space list --format json` 验证空间 → 获取 `project_key`
+1. 已知 `project_key` / `simple_name` 直接使用；未指定优先当前 profile 默认 key，仅名称/多空间歧义/不同标识要求时发现空间，见 [workitem.md](workitem.md#发现与复用)。空间证据不代表写权限，后续写入检查不变。
 2. 用 `meegle workitem meta-types --project-key PROJ --format json` 获取类型列表 → 确认 `work_item_type_key`
 
 > 唯一匹配则直接用，多个匹配则展示列表让用户选，无匹配则问用户。**禁止猜测。**
@@ -105,7 +105,7 @@ meegle workitem meta-create-fields \
 
 - 优先把目标人写到 `role_owners`
 - 不直写 `current_status_operator`
-- `owner` 仅在用户明确要设置实例 owner，或该语义在当前类型上找不到对应 role 时才作为兜底字段
+- `owner` 仅在用户明确要设置实例 owner；找不到对应 role 时停止并说明，不能把角色请求降级为 owner
 
 ### STEP 6 — 转换字段值
 
@@ -149,24 +149,15 @@ meegle workitem create \
 
 🚨 **批量创建**：当用户要求批量创建多个工作项时，必须**串行调用**（逐个请求），禁止高并发，以免触发平台限流。
 
-### STEP 8 — 错误分流与降级
+### STEP 8 — 错误分流与恢复
 
-如果 `workitem create` 失败，按下面顺序处理：
+所有恢复先按 [error-handling.md](error-handling.md) 区分未发送、明确拒绝、结果未知和成功：
 
-- `field [xxx] is illegal`
-  处理：先判断该字段是否来自 preflight 有效必填；no-preflight 路径再判断是否 `is_required == 1 && is_visibility == 1`
-  - 若是有效必填 / 可见必填字段：停止，不要移除字段重试；说明这是创建页元数据或 preflight 与 create API 契约不一致
-  - 若是可选字段：可移除该可选字段后重试一次，并在结果中说明该可选字段未写入
-- 明确缺少模板
-  处理：回到 STEP 3，读取 `field_key == "template"` 的 `options[]`
-- 明确缺少某个字段
-  处理：回到 STEP 3，优先跑 `workitem create-preflight`；如果 preflight 不可用，再核对所有 `is_required == 1 && is_visibility == 1` 字段。如果后端点名的是隐藏/条件可见字段，向用户说明这是后端最终校验要求，再让用户提供真实适用值
-
-如果工作项已经创建成功：
-
-- **不要**用删除必填字段的方式制造“创建成功”
-- 若工作项是节点流（`pattern = Node`），改走 `workflow` 路径，在对应节点通过 `workflow transition --fields` / `workflow update-node` 补充
-- 若字段明显不属于 workflow 可写范围，则告知用户改走 web 端
+- `field [xxx] is illegal`：核对字段类型、选项与当前契约，不把报错直接解释为不可写。用户明确要求的字段即使 API 可选也必须保留，不能删字段后继续创建；无法满足时先说明限制，只有用户同意部分执行后才执行并披露遗漏。
+- 缺少模板/必填字段：回到元数据/preflight 核对来源；缺少真实适用值时询问用户，不造占位值。
+- 超时、断连、响应解析失败：结果未知，不原参重试。仅用本次返回 ID/关联证据只读核对，不以同名或没搜到同名证明本次是否创建。无法确认未落地且无已验证幂等契约时停止，请用户决定。
+- 已确认成功：直接进入回读，不为补字段再次创建；节点字段需另行确认对应 workflow 写入范围，不能将通用字段失败自动转为 workflow 写入。
+- 权限硬停：停止该目标所有进一步查询和写入，不换路径绕权限。
 
 ### STEP 9 — 确认结果
 
@@ -178,7 +169,7 @@ meegle workitem get \
   --format json
 ```
 
-创建成功后，向用户展示：
+回读同空间、同类型、本次返回 ID，逐项对比用户要求的字段（不只核验标题）。字段未持久化则报告未完成/部分完成及差异，不盲目再写；回读失败则报告“已提交但未验证”和无法确认项。只有已核验后才宣称完成，并展示：
 - 工作项 ID 和名称
 - 已设置的关键字段摘要
 
@@ -188,14 +179,14 @@ meegle workitem get \
 
 ## 不可写入的字段类型
 
-遇到时**直接跳过并告知用户**：
+遇到用户要求但不可写的字段先说明限制；只有用户同意部分执行后才省略并逐项披露：
 
 | 类型 | 原因 |
 |------|------|
 | `file` / `multi-file`（附件） | 创建后再用 `attachment upload` 追加附件；当前创建接口不直接内联上传文件 |
 | `vote-boolean`（轻量表态） | 计数器，只能页面操作 |
 | `vote-option` / `vote-option-multi`（投票） | 不支持接口写 |
-| `compound_field` / `multi_user_compound_field`（复合明细表） | API 暂不支持 |
+| `compound_field` / `multi_user_compound_field`（复合明细表） | 写入可靠性未确认，优先页面维护 |
 | 计算字段 | 系统自动算，只读 |
 
 ---
@@ -207,12 +198,12 @@ meegle workitem get \
 | 报错特征 | 自愈动作 |
 |---------|---------|
 | `need STRING type, but got: LIST/MAP` | shape 不匹配；回查 [field-value-format.md](field-value-format.md) 找正确 shape，**禁止** JSON.stringify 绕过 |
-| `json: unsupported type` / 网络超时 | 原参数直接重试 |
+| `json: unsupported type` / 网络超时 | 按 STEP 8 分类；无法证明未发送时为结果未知，禁止盲目重写 |
 | 字段 key 不匹配 | 用 `workitem meta-create-fields` 全量返回按 `field_name` 模糊匹配 |
 | `invalid select option(s)` | 从 meta 的 `options[]` 匹配；唯一匹配则修正重试，否则展示候选让用户选 |
-| `field [xxx] is illegal` | 若字段是 preflight 有效必填，或 no-preflight 路径下的 `meta-create-fields.is_required == 1 && is_visibility == 1`，停止并报告元数据/preflight/create 契约不一致；若是可选字段，移除该可选字段后最多重试一次 |
+| `field [xxx] is illegal` | 查唯一格式索引与目标契约；不得删除用户要求字段绕过，部分执行须先取得用户同意 |
 | `不满足层级配置` | 查 `children` 树，展示末级叶子节点让用户选择 |
-| 明确缺少必填字段 | 核对字段类型限制，关联工作项尝试数字↔字符串切换 |
+| 明确缺少必填字段 | 核对字段类型限制并请求真实适用值，不猜测格式轮试 |
 
 若本轮失败与“处理人 / 项目经理 / 研发代表”等角色语义相关：
 
