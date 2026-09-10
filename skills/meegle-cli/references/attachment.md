@@ -129,6 +129,32 @@ meegle attachment download \
 
 不要使用 `--format json > attachment.jpg` 获取附件内容；`--format` 只控制上述元数据的展示格式。如果服务端未发布无损下载 capability，CLI 会返回 `ATTACHMENT_BINARY_DOWNLOAD_UNSUPPORTED`，此时升级远端 Meegle MCP Server 并加 `--refresh` 重试，不会回退到旧的文本 MCP 响应。
 
+### 大小上限与超大附件降级
+
+平台对单个附件的下载有 **100MB 上限**（上游返回 `File Size Limit 100M`）。超限时 CLI 返回 `ATTACHMENT_DOWNLOAD_TOO_LARGE`，错误信息保留上游原文，`retryable` 为 `false`——**不要重试，重试不会成功**。
+
+其它非 2xx 失败同样会在错误信息里带上游响应体摘要（例如 `err_code` / `err_msg`）。先读这条信息再决定动作，不要把它当成无信息的泛化失败。
+
+下载前先判断大小，避免无意义请求：
+
+```bash
+# 附件的 size 字段来自工作项附件字段，例如 "552.8MB"
+meegle workitem get \
+  --project-key PROJ \
+  --work-item-type-key TYPE_KEY \
+  --work-item-ids '[WORK_ITEM_ID]' \
+  --fields '["ATTACHMENT_FIELD_KEY"]' \
+  --format json
+```
+
+超过上限时的可执行降级：
+
+1. **要求更小的附件**：请附件上传方压缩、拆分，或只上传需要的关键片段。
+2. **分段拉取**：仅当任务必须读取超大文件的局部内容时，用附件字段返回的 `url`（配合已登录的浏览器会话）做 HTTP Range 分段拉取，例如只取尾部若干 MB；**不要**尝试把整个文件读进会话。
+3. **明确披露**：无法获取时直接告诉用户是超出平台上限，不要反复重试或声称已读取。
+
+> Range 分段属于兜底手段，依赖浏览器登录态与上游存储接口，不是 CLI 能力；能用第 1 条解决时优先用第 1 条。
+
 ## attachment delete
 
 按 UUID 从工作项附件中删除文件。**destructive 命令，必须带 `--confirm` 才能执行**；使用前应确认目标工作项、字段和待删 UUID 列表。

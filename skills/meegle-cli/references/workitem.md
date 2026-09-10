@@ -11,6 +11,7 @@
 - [工作项对象结构](#工作项对象结构)
 - [当前用户相关查询](#当前用户相关查询)
 - [字段 projection 与本地输出裁剪](#字段-projection-与本地输出裁剪)
+- [批量读取与分页硬上限](#批量读取与分页硬上限)
 - [关联字段过滤](#关联字段过滤)
 - [上下文推断](#上下文推断)
 - [workitem meta-types](#workitem-meta-types)
@@ -63,6 +64,8 @@ meegle workitem search-filter \
   --page-size N \
   --format json
 ```
+
+`--page-size` 上限为 **200**（实测 200 可用，超过则报错）。`search-filter` 只返回内置字段，把业务字段写进 `--output-select` 不会报错但也不会返回；具体边界见 [批量读取与分页硬上限](#批量读取与分页硬上限)。
 
 状态 value 仍来自同一次 `meta-fields` 中 `work_item_status.options[].value`，展示时用同一份 options 映射回 label。`--work-item-status` 的对象形态以 live `inspect workitem.search-filter` 和已验证 CLI contract 为准；当前可用 `state_key` 传状态 value。优先用 `search-filter` 内置 flag 表达 `status`、`priority`、`business`、`tag`、`user_keys` 等维度，不要为了分 bucket 升级到 `search-by-params`。
 
@@ -248,7 +251,7 @@ for (const t of ts) {
 所有 workitem meta 命令已与 upstream 完全对齐：
 - `workitem meta-types` — 列出空间下所有工作项类型
 - `workitem meta-fields` — 列出字段配置（可按工作项类型过滤）
-- `workitem meta-roles` — 列出流程角色配置
+- `workitem meta-roles` — 列出流程角色配置（role key 在返回的 `id` 字段，显示名在 `name`；见 [用户可读展示](#用户可读展示)）
 - `workitem meta-create-fields` — 获取创建工作项所需的元数据
 - `workitem create-preflight` — 写入前评估当前 payload 缺少的有效必填字段（只读，不创建工作项）
 
@@ -339,7 +342,7 @@ meegle workitem search-by-params \
 
 - `select` / `multi-select` / `tree-select` 等优先展示 label，未取得映射明确标注原始 key。
 - 业务线名称可参考 `auth whoami` 的 `business_line_names`（仅只读 fallback 上下文，不代表普通工作项可见范围）；完整名称映射来自 `space business-lines`。
-- 角色名称来自 `workitem meta-roles --project-key PROJ --work-item-type-key TYPE_KEY`。
+- 角色名称来自 `workitem meta-roles --project-key PROJ --work-item-type-key TYPE_KEY`。**该接口把 role key 放在 `id` 字段**（如 `"id": "role_065f31"`），显示名在 `name`，别名在 `role_alias`；据此才能把 `role_owners[].role` 反查成可读角色名。不要去找 `role_key` / `role_id`，它们不存在。
 - 人名/关键词解析优先 `user search --query "姓名" --project-key PROJ`；精确 user_key 回填见上方 gate 与 [verified-command-surface.md](verified-command-surface.md)。只有任务明确为“空间下团队成员”才用 `team list-members`；团队列表及其 `user_keys` / `administrators` 不是空间成员全集，不用于扫描所有负责人。
 
 ---
@@ -418,11 +421,34 @@ meegle workitem search-by-params \
 - 在上述命令上，默认用 `--select` 表达产品化字段 projection；即使 live `inspect.parameters[]` 显示底层 `fields` 参数，也不要在普通展示路径改用 `--fields`。
 - 不要同时传 `--select` 与 `--fields`。如果已经选择 `--select`，需要 `fields[]` 业务字段时直接把字段 key 放进同一个 `--select` 列表，例如 `--select id,name,work_item_status,current_status_operator`；但读取位置仍按“稳定顶层字段 allowlist / `fields[]` 业务字段”判断，`current_status_operator` 不会因此变成顶层字段。
 - `workitem search-filter` 主要用于内置维度过滤；它不声明 backend projection，传 `--select` 会直接报错。如果只是想少展示字段，用 `--output-select`；若任务还关心总量或分布，默认直接读取返回里的 `pagination`。
+- **`workitem search-filter` 的返回集合是固定内置字段，不包含 `fields[]` 业务字段**（live contract 无 `fields` 参数，传 `--output-select` 写业务字段也不会报错，只会静默缺失）。需要业务字段时走两段式：先用 `--output-select` 定位到 ID，再用 `workitem get --work-item-ids` 批量补取，不要指望 `search-filter` 直接返回。
 - `workitem search-filter` 按名称搜索只接受 `--work-item-name`。不要把创建类命令的 `--name` 或其他系统的 `--keyword` 用在 `search-filter` 上，也不要先 probe 再自愈。
 - 排障时先用 `--dry-run` 查看 `.params.data.fields` 是否出现，确认 projection 已进入后端请求。
 - verified command 的 dry-run 如果因为未知顶层参数直接失败，优先检查 flag 名、`--params` 顶层 key，或重新用 `inspect --format json` 对照当前命令面。
 - 当前后端在 `workitem get` / `workitem search-by-params` 上主要会收敛 `fields[]` 业务字段集合；稳定顶层字段 allowlist 中的字段仍可能按接口契约返回。不要把 `--select` 列表理解成 JSON 顶层路径列表。
+- `--output-select` 对不存在的 key 是**静默丢弃**：既不报错也无声告警。需要确认字段真实存在时，先看同类型 `meta-fields`（业务字段）或 live `inspect`（参数面）。
 
+### 批量读取与分页硬上限
+
+以下上限由后端强制，写进命令前先按此设计，不要靠报错发现：
+
+| 命令 | 上限 | 超限表现 | 正确做法 |
+|---|---|---|---|
+| `workitem get --work-item-ids` | **单次 50 个 ID** | `{"err_code":20028,"err_msg":"Workitem Ids Limit 50"}` | 本地按 50 切批，逐批 `workitem get` 后合并；不要传全量 ID 试一次 |
+| `workitem search-filter --page-size` | **200** | `{"err_code":20006,"err_msg":"Invalid Param","err":{"msg":"page size should less than 200"}}` | 用 `--page-num` 分页，或按 bucket 拆查询 |
+
+批量补取模板（当前展示页或当前任务集 ≤50 时一次完成）：
+
+```bash
+meegle workitem get \
+  --project-key PROJ \
+  --work-item-type-key TYPE_KEY \
+  --work-item-ids '[ID1,ID2]' \
+  --fields '["current_status_operator"]' \
+  --format json
+```
+
+当任务需要跨页总量或聚合分布，而你拿到的响应里**没有 `pagination`** 时，不要假定可以本地全量聚合：CLI 是 stateless 单次调用，无法在一条命令里跨页统计。此时要么明确告知不可行并给出替代路径（固定视图 / 图表），要么先确认该命令本来就不返回分页元信息。
 ---
 
 ## 关联字段过滤
