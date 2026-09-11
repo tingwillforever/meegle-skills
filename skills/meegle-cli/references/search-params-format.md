@@ -9,6 +9,44 @@
 
 ---
 
+## 常用复合检索速查 (Quick Patterns)
+
+大多数复杂筛选可直接套用以下 3 种标准模式：
+
+### 1. 查我负责/与我相关的工作项
+```bash
+meegle workitem search-by-params \
+  --project-key <project_key> \
+  --work-item-type-key <type_key> \
+  --search-group '{"conjunction":"AND","search_params":[{"param_key":"people","operator":"HAS ANY OF","value":["<meegle_user_key>"]}],"search_groups":[]}' \
+  --select id,name,work_item_status,created_at \
+  --page-size 10 --format json
+```
+
+### 2. 查关联到特定工作项（按被关联 ID）
+> 注意：关联字段过滤的 value 必须是**数字 ID 数组**（如 `[20336086]`），不能传字符串。
+```bash
+meegle workitem search-by-params \
+  --project-key <project_key> \
+  --work-item-type-key <subject_type_key> \
+  --search-group '{"conjunction":"AND","search_params":[{"param_key":"<related_field_key>","operator":"HAS ANY OF","value":[<target_work_item_id>]}],"search_groups":[]}' \
+  --select id,name,work_item_status,created_at \
+  --page-size 10 --format json
+```
+
+### 3. 按时间范围与状态组合过滤
+> 注意：创建/更新时间过滤的 value 是毫秒时间戳（int64）。
+```bash
+meegle workitem search-by-params \
+  --project-key <project_key> \
+  --work-item-type-key <type_key> \
+  --search-group '{"conjunction":"AND","search_params":[{"param_key":"created_at","operator":">=","value":1779436496000},{"param_key":"work_item_status","operator":"!=","value":["Finished"]}],"search_groups":[]}' \
+  --select id,name,work_item_status,created_at \
+  --page-size 10 --format json
+```
+
+---
+
 ## 顶层结构：SearchGroup
 
 ```json

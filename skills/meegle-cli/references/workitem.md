@@ -325,16 +325,10 @@ meegle workitem search-by-params \
 ```
 
 规则：
-
-- `BUG_TYPE_KEY` 来自 `meta-types`
-- `STATUS_VALUE` 来自同一次 `meta-fields` 返回里 `work_item_status.options[]`
-- 负责人优先从最终查询结果的 `fields[]` 中读取 `field_key` / `field_alias == "current_status_operator"` 的字段
-- 默认只展示前 `10` 条
-- 默认使用 `--select` 表达字段 projection；不要再加 `--fields`
-- 不要再执行第二次 `meta-fields`
-- 不要把 `meta-fields` 输出保存到 `/tmp/meegle_*` 后再本地解析状态 options，也不要重跑 `meta-fields | rg/grep/jq` 只为定位 `待讨论` / `work_item_status`
-- 不要先裸跑一次 `search-by-params`，再同条件重跑第二次只为格式化输出
-- 不要把最终 `search-by-params` 与复杂 `jq` 串成同一个 shell 命令；默认 10 条展示直接基于返回 JSON 手工整理
+- `BUG_TYPE_KEY` 来自 `meta-types`；`STATUS_VALUE` 来自同一次 `meta-fields` 的 `work_item_status.options[]`。
+- 负责人优先从最终查询结果 `fields[]` 中读取 `field_key` / `field_alias == "current_status_operator"`。
+- 默认使用 `--select id,name,work_item_status,current_status_operator` 表达字段 projection，默认展示前 10 条。
+- 结果直接基于返回 JSON 手工整理呈显，严禁为格式化而重复执行查询或在同一命令中管道串联 `jq`。
 
 ### 用户可读展示
 
@@ -389,13 +383,9 @@ meegle workitem search-by-params \
 4. `meegle workitem search-by-params --project-key PROJ --work-item-type-key TYPE_KEY --search-group ... --select id,name,current_nodes,work_item_status,OWNER_FIELD_KEY,priority --page-size 10 --format json`
 
 规则补充：
-
-- 第 3 步的同一份 `meta-fields` 至少提取负责人字段 key、优先级 option value；同时从同一份结果取状态 `value → label` 映射，优先于节点名
-- 第 4 步直接作为最终查询；默认用 `--select` 一次性声明需要返回的顶层字段和自定义字段，不要同时传 `--fields`；不要先跑 `page-size 20` 再缩成 `page-size 10`
-- 不要再执行第二次 `search-by-params` 只为输出 Markdown 表格
-- 若需要展示总数，直接使用最终查询返回里的 `pagination.total`
-- 回答阶段禁止再发第二次 `meta-fields` 去单独抽 `work_item_status.options`，也禁止为补标题/状态/负责人再发第二次同条件 `search-by-params`；标题、状态、负责人都必须从第 3 步和第 4 步这两份结果本地整理出来。
-- 默认 10 条展示不要再运行本地 `jq` 生成表格；直接根据第 3 步和第 4 步返回内容写 Markdown。若非默认展示场景确实需要脚本处理，必须与业务命令分开，且不要让本地脚本退出码变成业务命令失败。
+- 第 3 步同一份 `meta-fields` 提取负责人字段 key、优先级 option value 及状态 `value → label` 映射。
+- 第 4 步为最终查询，默认用 `--select` 声明所需字段，展示总数直接读取 `pagination.total`。
+- 最终 5 列呈现直接基于返回数据手工整理，严禁为格式化而重发业务查询或管道串接本地脚本。
 
 ---
 
