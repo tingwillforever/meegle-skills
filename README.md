@@ -1,9 +1,10 @@
 # Meegle Skills
 
-这个仓库是公开可安装的 Meegle skill mirror，统一发布两套 skill：
+这个仓库是公开可安装的 Meegle skill mirror，统一发布三套 skill：
 
-- `meegle-cli`：给本机安装了 `meegle` CLI 的用户使用
+- `meegle-cli`：给本机安装了 `meegle` CLI 的用户使用，覆盖日常工作项、视图与工作流操作
 - `meegle-mcp`：给业务方 Agent 平台或 MCP-native 宿主使用
+- `meegle-rdhs-diagnosis`：给业务线负责人与产研管理层使用，提供产研过程健康度（RDHS）实时体检与提分治理建议
 
 它只负责对外分发，不是新的事实源。
 
@@ -31,6 +32,20 @@ npx -y skills add https://github.com/tingwillforever/meegle-skills --skill meegl
 ```bash
 meegle auth login
 ```
+
+## 安装 `meegle-rdhs-diagnosis`（产研过程健康度体检）
+
+面向一线产研团队、业务线接口人及管理层，随时掌握各产品及全业务线最新产研过程健康状况：
+
+```bash
+npx -y skills add https://github.com/tingwillforever/meegle-skills --skill meegle-rdhs-diagnosis -g -y
+```
+
+适用场景：
+
+- 业务负责人查询单品或业务线实时产研健康分（如“诊断讯飞智作”、“查看开放平台RDHS情况”）
+- 了解短板扣分原因（如“为什么我这个产品分这么低”）
+- 自动生成按角色分工的极简提分抓手行动卡片（如“怎么冲刺到70分达标”）
 
 ## 安装 `meegle-mcp`
 
