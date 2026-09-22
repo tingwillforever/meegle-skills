@@ -2,11 +2,11 @@
 """RDHS 产研健康度极速查询与诊断工具 (rdhs_query.py)
 
 专为 AI Agent 和产研效能分析设计：
-1. 自动调用 Meegle CLI 拉取实时度量底表，支持会话级短缓存（默认 5 分钟，--refresh 强制刷新）。
+1. 自动调用 Meegle CLI 拉取实时度量底表，支持会话级短缓存（默认 0 秒实时直连）。
 2. 内置 10429 频率限制自动重试与退避机制。
 3. 动态结合主数据清洗规则（自动剔除交付定制与测试业务线，只考核 In Progress 在研标准产品）。
-4. 内置 7 阶归因判定引擎与 4 级治理分档计算。
-5. 一键输出结构化 Markdown 体检报告或 JSON 数据，单次命令直接出具结论。
+4. 真实角色解析：严格从 role_owners 读取【产品代表】与【项目管理代表】，绝不误读卡片 owner 建卡人。
+5. 内置 7 阶归因判定引擎与 4 级治理分档计算。
 """
 
 from __future__ import annotations
@@ -27,6 +27,16 @@ CURRENT_CHART_ID = "7659618575337915254"
 LAST_CHART_ID = "7681204196376314742"
 PROJECT_KEY = "cbg_product_develop"
 MASTER_TYPE_KEY = "693f665435b354b7ca0085dc"
+
+# 角色映射表
+ROLE_MAP = {
+    "role_01773a": "产品代表",
+    "role_57dcb8": "产品经理",
+    "role_424751": "研发代表",
+    "role_0ba52c": "系统架构师",
+    "role_8d8f90": "项目管理代表",
+    "role_4292f5": "PMO"
+}
 
 # 7-tier attribution labels
 ATTR_DATA_MISSING = "过程数据缺失"
@@ -69,14 +79,14 @@ def run_meegle_cmd(args: List[str], max_retries: int = 3) -> Any:
             time.sleep(1)
     raise RuntimeError("Meegle CLI timed out after retries.")
 
-def get_cached_or_fetch(key: str, fetch_fn, refresh: bool = False) -> Any:
+def get_cached_or_fetch(key: str, fetch_fn, ttl: int = CACHE_TTL, refresh: bool = False) -> Any:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"{key}.json"
     now = time.time()
-    if not refresh and cache_file.exists():
+    if not refresh and ttl > 0 and cache_file.exists():
         try:
             mtime = cache_file.stat().st_mtime
-            if now - mtime < CACHE_TTL:
+            if now - mtime < ttl:
                 with open(cache_file, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception:
@@ -90,10 +100,11 @@ def get_cached_or_fetch(key: str, fetch_fn, refresh: bool = False) -> Any:
         pass
     return data
 
-def get_chart_data(chart_id: str, refresh: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
+def get_chart_data(chart_id: str, ttl: int = CACHE_TTL, refresh: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
     raw = get_cached_or_fetch(
         f"chart_{chart_id}",
         lambda: run_meegle_cmd(["chart", "get", "--project-key", PROJECT_KEY, "--chart-id", chart_id]),
+        ttl=ttl,
         refresh=refresh
     )
     quota_titles = raw.get("quota_titles", []) if isinstance(raw, dict) else []
@@ -101,10 +112,11 @@ def get_chart_data(chart_id: str, refresh: bool = False) -> Tuple[List[str], Lis
     rows = chart_list[0] if chart_list else []
     return quota_titles, rows
 
-def get_business_lines(refresh: bool = False) -> Dict[str, str]:
+def get_business_lines(ttl: int = CACHE_TTL, refresh: bool = False) -> Dict[str, str]:
     raw = get_cached_or_fetch(
         "business_lines",
         lambda: run_meegle_cmd(["space", "business-lines", "--project-key", PROJECT_KEY]),
+        ttl=3600 if ttl == 0 else ttl,  # 业务线树结构极为稳定，默认安全缓存1小时
         refresh=refresh
     )
     b_map: Dict[str, str] = {}
@@ -118,41 +130,6 @@ def get_business_lines(refresh: bool = False) -> Dict[str, str]:
     traverse(nodes)
     return b_map
 
-def get_product_master(refresh: bool = False) -> Dict[str, Dict[str, Any]]:
-    raw = get_cached_or_fetch(
-        "product_master",
-        lambda: run_meegle_cmd([
-            "workitem", "search-filter",
-            "--project-key", PROJECT_KEY,
-            "--work-item-type-keys", MASTER_TYPE_KEY,
-            "--page-size", "200"
-        ]),
-        refresh=refresh
-    )
-    items = raw if isinstance(raw, list) else (raw.get("data", []) if isinstance(raw, dict) else [])
-    b_lines = get_business_lines(refresh=refresh)
-    
-    master: Dict[str, Dict[str, Any]] = {}
-    for it in items:
-        f_map = {f["field_key"]: f for f in it.get("fields", [])}
-        bid = f_map.get("business", {}).get("field_value")
-        p_attr = f_map.get("field_22acd7", {}).get("field_value", {}).get("label", "标准产品")
-        status = it.get("work_item_status", {}).get("state_key", "")
-        owner = f_map.get("owner", {}).get("field_value")
-        b_path = b_lines.get(bid, "其他业务线")
-        
-        master[it["name"].strip()] = {
-            "id": it["id"],
-            "business_id": bid,
-            "business_path": b_path,
-            "status": status,
-            "is_in_progress": (status == "In Progress"),
-            "product_attr": p_attr,
-            "is_custom": (p_attr == "交付定制"),
-            "owner": str(owner) if owner else ""
-        }
-    return master
-
 def resolve_user_names(user_keys: List[str]) -> Dict[str, str]:
     if not user_keys:
         return {}
@@ -164,21 +141,100 @@ def resolve_user_names(user_keys: List[str]) -> Dict[str, str]:
         except Exception:
             pass
 
-    to_query = [k for k in user_keys if k and k not in known]
+    to_query = [k for k in set(user_keys) if k and k not in known]
     if to_query:
+        # Batch query in chunks of 10
+        for i in range(0, len(to_query), 10):
+            chunk = to_query[i:i+10]
+            try:
+                res = run_meegle_cmd(["user", "query", "--user-keys", ",".join(chunk)])
+                user_list = res if isinstance(res, list) else (res.get("data", []) if isinstance(res, dict) else [])
+                for u in user_list:
+                    uk = str(u.get("user_key", ""))
+                    name_cn = u.get("name_cn", "") or u.get("name", {}).get("zh_cn", "")
+                    simple_name = name_cn.split()[0] if name_cn else uk
+                    known[uk] = simple_name
+            except Exception:
+                pass
         try:
-            res = run_meegle_cmd(["user", "query", "--user-keys", ",".join(to_query)])
-            user_list = res if isinstance(res, list) else (res.get("data", []) if isinstance(res, dict) else [])
-            for u in user_list:
-                uk = str(u.get("user_key", ""))
-                name_cn = u.get("name_cn", "") or u.get("name", {}).get("zh_cn", "")
-                simple_name = name_cn.split()[0] if name_cn else uk
-                known[uk] = simple_name
             with open(USER_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(known, f, ensure_ascii=False)
         except Exception:
             pass
     return known
+
+def get_product_master(ttl: int = CACHE_TTL, refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+    raw = get_cached_or_fetch(
+        "product_master",
+        lambda: run_meegle_cmd([
+            "workitem", "search-filter",
+            "--project-key", PROJECT_KEY,
+            "--work-item-type-keys", MASTER_TYPE_KEY,
+            "--page-size", "200"
+        ]),
+        ttl=ttl,
+        refresh=refresh
+    )
+    items = raw if isinstance(raw, list) else (raw.get("data", []) if isinstance(raw, dict) else [])
+    b_lines = get_business_lines(ttl=ttl, refresh=refresh)
+    
+    # Pre-collect all user keys inside role_owners
+    all_role_users: List[str] = []
+    for it in items:
+        for f in it.get("fields", []):
+            if f.get("field_key") == "role_owners":
+                for r in f.get("field_value") or []:
+                    for o in r.get("owners") or []:
+                        all_role_users.append(str(o))
+    user_map = resolve_user_names(all_role_users)
+
+    master: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        f_map = {f["field_key"]: f for f in it.get("fields", [])}
+        bid = f_map.get("business", {}).get("field_value")
+        p_attr = f_map.get("field_22acd7", {}).get("field_value", {}).get("label", "标准产品")
+        status = it.get("work_item_status", {}).get("state_key", "")
+        b_path = b_lines.get(bid, "其他业务线")
+        
+        # Parse real role owners
+        ro_list = f_map.get("role_owners", {}).get("field_value") or []
+        roles: Dict[str, List[str]] = {}
+        for r in ro_list:
+            rid = r.get("role")
+            rname = ROLE_MAP.get(rid, rid)
+            owners = [user_map.get(str(o), str(o)) for o in (r.get("owners") or [])]
+            if owners:
+                roles[rname] = owners
+
+        # Determine primary responsible person (优先产品代表 -> 产品经理 -> 项目管理代表)
+        prod_rep = roles.get("产品代表", [])
+        prod_mgr = roles.get("产品经理", [])
+        pm_rep = roles.get("项目管理代表", [])
+        
+        primary_owner = ""
+        if prod_rep:
+            primary_owner = f"{','.join(prod_rep)} (产品代表)"
+        elif prod_mgr:
+            primary_owner = f"{','.join(prod_mgr)} (产品经理)"
+        elif pm_rep:
+            primary_owner = f"{','.join(pm_rep)} (项目管理)"
+        else:
+            primary_owner = "未指定"
+
+        master[it["name"].strip()] = {
+            "id": it["id"],
+            "business_id": bid,
+            "business_path": b_path,
+            "status": status,
+            "is_in_progress": (status == "In Progress"),
+            "product_attr": p_attr,
+            "is_custom": (p_attr == "交付定制"),
+            "roles": roles,
+            "owner": primary_owner,
+            "prod_rep": ",".join(prod_rep) if prod_rep else "-",
+            "pm_rep": ",".join(pm_rep) if pm_rep else "-"
+        }
+    return master
 
 def evaluate_attribution(metrics: Dict[str, Any]) -> Tuple[str, str, str]:
     participants = float(metrics.get("有效参与人数") or 0)
@@ -239,10 +295,7 @@ def get_tier(rdhs: float) -> Tuple[str, str]:
         return "重点治理", "P0"
 
 def parse_chart_rows(quota_titles: List[str], rows: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Match chart rows to product master, avoiding empty/zero cross-product noise."""
     prods: Dict[str, Dict[str, Any]] = {}
-    
-    # First pass: collect non-zero_spec rows
     valid_rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
     fallback_rows: Dict[str, Dict[str, Any]] = {}
 
@@ -270,7 +323,6 @@ def parse_chart_rows(quota_titles: List[str], rows: List[Dict[str, Any]], master
         if p_name not in fallback_rows or not r.get("is_zero_spec", False):
             fallback_rows[p_name] = row_obj
 
-    # Match each product in master
     for pname, minfo in master.items():
         b_top = minfo["business_path"].split("/")[0] if minfo.get("business_path") else ""
         if (b_top, pname) in valid_rows:
@@ -278,14 +330,13 @@ def parse_chart_rows(quota_titles: List[str], rows: List[Dict[str, Any]], master
         elif pname in fallback_rows:
             prods[pname] = fallback_rows[pname]
 
-    # Also add any products in chart that might not be in master
     for (b_name, pname), row_obj in valid_rows.items():
         if pname not in prods:
             prods[pname] = row_obj
 
     return prods
 
-def format_product_report(p_name: str, cur_item: Optional[Dict[str, Any]], last_item: Optional[Dict[str, Any]], master_info: Optional[Dict[str, Any]], user_map: Dict[str, str]) -> str:
+def format_product_report(p_name: str, cur_item: Optional[Dict[str, Any]], last_item: Optional[Dict[str, Any]], master_info: Optional[Dict[str, Any]]) -> str:
     if not cur_item:
         return f"未在当前月度量图表中找到产品【{p_name}】的记录。"
 
@@ -311,8 +362,13 @@ def format_product_report(p_name: str, cur_item: Optional[Dict[str, Any]], last_
     b_path = master_info.get("business_path", cur_item["business_line_chart"]) if master_info else cur_item["business_line_chart"]
     p_attr = master_info.get("product_attr", "标准产品") if master_info else "标准产品"
     status_str = "在研 (In Progress)" if (master_info and master_info.get("is_in_progress")) else "存量维护/其他"
-    owner_raw = master_info.get("owner", "") if master_info else ""
-    owner_name = user_map.get(owner_raw, owner_raw) or "未指定"
+    
+    roles_str = ""
+    if master_info and master_info.get("roles"):
+        roles_parts = [f"{r}: {','.join(names)}" for r, names in master_info["roles"].items() if r != "PMO"]
+        roles_str = " | ".join(roles_parts)
+    if not roles_str:
+        roles_str = master_info.get("owner", "未指定") if master_info else "未指定"
 
     def dim_status(score: float, max_s: float) -> str:
         ratio = score / max_s if max_s > 0 else 0
@@ -331,7 +387,8 @@ def format_product_report(p_name: str, cur_item: Optional[Dict[str, Any]], last_
 
     lines = [
         f"## 🏥【{p_name}】RDHS 产研过程体检诊断报告",
-        f"- **业务归属**：`{b_path}` | **产品属性**：{p_attr} | **当前状态**：{status_str} | **负责人**：{owner_name}",
+        f"- **业务归属**：`{b_path}` | **产品属性**：{p_attr} | **当前状态**：{status_str}",
+        f"- **核心责任角色**：{roles_str}",
         f"- **综合健康度**：**{rdhs_cur:.0f} 分**（{tier_name}，治理优先级：`{tier_p}`） | **上月基线**：{last_rdhs_str}（环比：{delta_str}）",
         f"- **核心归因判定**：`【{main_tag}】` ── 节拍失衡点：`{step}`",
         f"- **病根事实**：{detail}",
@@ -367,36 +424,30 @@ def main():
     parser.add_argument("--business-line", "-b", help="按业务线名称筛选 (如: AI交互, 开放平台, 录音笔)")
     parser.add_argument("--all", "-a", action="store_true", help="输出全景排行榜")
     parser.add_argument("--compare", "-c", action="store_true", help="是否拉取上月基线进行环比对比")
-    parser.add_argument("--cache-ttl", type=int, default=0, help="缓存过期时间(秒)，默认 0 (始终实时直连)")
+    parser.add_argument("--cache-ttl", type=int, default=CACHE_TTL, help="缓存过期时间(秒)，默认 0 (实时直连)")
     parser.add_argument("--refresh", "-r", action="store_true", help="强制穿透缓存直连拉取最新数据")
     parser.add_argument("--format", "-f", choices=["markdown", "json"], default="markdown", help="输出格式")
 
     args = parser.parse_args()
 
     # 1. Fetch master data first
-    master = get_product_master(refresh=args.refresh)
+    master = get_product_master(ttl=args.cache_ttl, refresh=args.refresh)
 
     # 2. Fetch current month chart
-    cur_qt, cur_rows = get_chart_data(CURRENT_CHART_ID, refresh=args.refresh)
+    cur_qt, cur_rows = get_chart_data(CURRENT_CHART_ID, ttl=args.cache_ttl, refresh=args.refresh)
     cur_prods = parse_chart_rows(cur_qt, cur_rows, master)
 
     # 3. Fetch last month if compare requested
     last_prods: Dict[str, Dict[str, Any]] = {}
     if args.compare:
         try:
-            last_qt, last_rows = get_chart_data(LAST_CHART_ID, refresh=args.refresh)
+            last_qt, last_rows = get_chart_data(LAST_CHART_ID, ttl=args.cache_ttl, refresh=args.refresh)
             last_prods = parse_chart_rows(last_qt, last_rows, master)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to fetch baseline chart: {e}\n")
 
-    # Resolve owners
-    owners = [m.get("owner", "") for m in master.values() if m.get("owner")]
-    user_map = resolve_user_names(owners)
-
     # Filter
     matched: List[Tuple[str, Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = []
-    
-    # Check all products in master or chart
     all_pnames = sorted(set(list(master.keys()) + list(cur_prods.keys())))
 
     for pname in all_pnames:
@@ -404,7 +455,6 @@ def main():
         c_item = cur_prods.get(pname)
         bpath = minfo.get("business_path", c_item["business_line_chart"] if c_item else "") if minfo else (c_item["business_line_chart"] if c_item else "")
         
-        # Exclude test business line
         if "测试业务线" in bpath:
             continue
             
@@ -437,32 +487,29 @@ def main():
     # Markdown format
     if args.product and len(matched) == 1:
         pname, c_item, l_item, minfo = matched[0]
-        print(format_product_report(pname, c_item, l_item, minfo, user_map))
+        print(format_product_report(pname, c_item, l_item, minfo))
     else:
-        # Multi-product summary table
         bl_title = f"【{args.business_line}】" if args.business_line else "产研健康度全景"
         print(f"## 📊 {bl_title} 产研健康度 (RDHS) 诊断榜单 (共 {len(matched)} 款产品)")
         print()
-        print("| 产品型号/名称 | 业务线归属 | 属性/状态 | RDHS得分 | 治理分档 | 核心归因与短板 | 负责人 |")
+        print("| 产品型号/名称 | 业务线归属 | 属性/状态 | RDHS得分 | 治理分档 | 产品代表 | 项目管理代表 |")
         print("| :--- | :--- | :--- | :---: | :---: | :--- | :--- |")
         
-        # Sort by RDHS ascending (worst first)
         matched.sort(key=lambda x: (x[1]["rdhs"] if x[1] else 0))
         
         for pname, c_item, l_item, minfo in matched:
             if not c_item:
-                print(f"| **{pname}** | {minfo.get('business_path','-')} | 缺失度量 | **—** | P0 重点治理 | 未形成有效度量底表 | - |")
+                print(f"| **{pname}** | {minfo.get('business_path','-')} | 缺失度量 | **—** | P0 重点治理 | {minfo.get('prod_rep','-')} | {minfo.get('pm_rep','-')} |")
                 continue
             rdhs = c_item["rdhs"]
             t_name, t_p = get_tier(rdhs)
-            tag, detail, step = evaluate_attribution(c_item["metrics"])
             bpath = minfo.get("business_path", c_item["business_line_chart"]) if minfo else c_item["business_line_chart"]
             p_attr = minfo.get("product_attr", "标准产品") if minfo else "标准产品"
             status_desc = "在研" if (minfo and minfo.get("is_in_progress")) else "存量"
             attr_full = f"{p_attr}({status_desc})"
-            owner_raw = minfo.get("owner", "") if minfo else ""
-            owner_name = user_map.get(owner_raw, owner_raw) or "-"
-            print(f"| **{pname}** | {bpath} | {attr_full} | **{rdhs:.0f} 分** | `{t_name}({t_p})` | 【{tag}】{step} | {owner_name} |")
+            prod_rep = minfo.get("prod_rep", "-") if minfo else "-"
+            pm_rep = minfo.get("pm_rep", "-") if minfo else "-"
+            print(f"| **{pname}** | {bpath} | {attr_full} | **{rdhs:.0f} 分** | `{t_name}({t_p})` | {prod_rep} | {pm_rep} |")
 
 if __name__ == "__main__":
     main()
