@@ -33,8 +33,9 @@ python3 <skill-dir>/scripts/rdhs_query.py --all [--compare]
 python3 <skill-dir>/scripts/rdhs_query.py --business-line "业务线名称" --trend
 python3 <skill-dir>/scripts/rdhs_query.py --all --trend
 
-# 6. 会话短缓存说明：默认实时直连 (0缓存)。若短时间高频分析同一底表可指定 --cache-ttl 300
-python3 <skill-dir>/scripts/rdhs_query.py --product "产品名称" --cache-ttl 300
+# 6. 缓存策略：当月 RDHS 始终实时，已归档数据自动短缓存。
+#    需要强制穿透全部缓存重拉时用 --refresh；--cache-ttl 只影响当月实时数据的缓存时长。
+python3 <skill-dir>/scripts/rdhs_query.py --product "产品名称" --refresh
 ```
 
 *注：`<skill-dir>` 解析为本 SKILL.md 所在目录的绝对路径。*
@@ -43,7 +44,7 @@ python3 <skill-dir>/scripts/rdhs_query.py --product "产品名称" --cache-ttl 3
 
 ## 🛑 关键检查点（Checkpoints）
 
-- **🛑 CHECKPOINT · 全盘扫描时延告知**：执行 `--all`（全 BG 大盘扫描）前，必须知悉线上需并发遍历完整主数据与多度量列，耗时约 6~8 秒，严禁误判为无响应强行中断进程。
+- **🛑 CHECKPOINT · 全盘扫描时延告知**：`--all` 受飞书项目接口往返限制（单张图表约 8~13 秒）。首次或 `--refresh` 约 25~40 秒；当月数据实时、归档数据命中缓存后约 8~9 秒。严禁误判为无响应强行中断进程。
 - **🛑 CHECKPOINT · 变更与治理动作确认**：本技能仅负责体检诊断与给出抓手；**严禁**未经业务负责人明确确认自主流转状态、关闭缺陷或删除线上工作项。
 
 ---
@@ -58,7 +59,14 @@ python3 <skill-dir>/scripts/rdhs_query.py --product "产品名称" --cache-ttl 3
    - 一级业务线月度趋势 Chart ID：`7688177041702650742`
    - 二级业务线月度趋势 Chart ID：`7688220298042147702`
    - 产品主数据类型：`693f665435b354b7ca0085dc`（产品型号/子平台）
-2. **清洗三铁律**：
+2. **缓存策略**：
+   - **当月 RDHS 图表始终实时**（默认 `CACHE_TTL = 0`），保证“聚焦当下”不被缓存抹掉；
+   - **已归档数据给缓存下限 `ARCHIVE_TTL = 1800`**：上月图表、月度趋势不会随日变化，重复查询不再重复拉取；
+   - **产品主数据缓存下限 `MASTER_TTL = 1800`**；业务线树缓存 1 小时；
+   - `--cache-ttl N` 只调整当月实时数据的缓存时长，不会把归档数据变旧；
+   - `--refresh` 强制穿透全部缓存。
+3. **主数据分页**：`--page-size` 单页上限 200，脚本按 `--page-num` 逐页拉取，超过 200 条不会静默截断；分页失败时直接报错而不输出不完整榜单。
+4. **清洗三铁律**：
    - **状态过滤**：只纳入工作流状态为 `In Progress`（研发中）的产品，存量维护产品（`rOjOjH7U_`）标识为存量；
    - **排除交付定制**：产品属性（`field_22acd7`）为 `交付定制`（`hmeckpgbh`）的项目，不计入自研考核与达标率分母；
    - **排除测试业务线**：`测试业务线`（`678f4f4907926543018acd93`）直接排除。

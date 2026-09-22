@@ -22,7 +22,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 CACHE_DIR = Path(os.path.expanduser("~/.cache/meegle-rdhs"))
-CACHE_TTL = 0  # 默认 0 秒：确保每次调用 100% 直连飞书项目拉取此时此刻最新实时数据
+CACHE_TTL = 0  # 当月实时数据默认 0 秒直连；已归档数据另有下限，见 ttl_for_chart
+ARCHIVE_TTL = 1800  # 已归档数据（上月图表、月度趋势）不会随日变化，最短缓存 30 分钟
+MASTER_TTL = 1800  # 产品主数据状态与责任角色低频变化，最短缓存 30 分钟
+MAX_MASTER_PAGES = 50  # 分页保险丝：防止服务端忽略 page-num 时死循环
 TREND_MONTHS = 6
 
 CURRENT_CHART_ID = "7659618575337915254"
@@ -105,11 +108,36 @@ def get_cached_or_fetch(key: str, fetch_fn, ttl: int = CACHE_TTL, refresh: bool 
         pass
     return data
 
+def ttl_for_chart(chart_id: str, requested: int) -> int:
+    """当月图表必须实时；已归档图表（上月、月度趋势）不会随时变化，给缓存下限。"""
+    if chart_id == CURRENT_CHART_ID:
+        return requested
+    return max(requested, ARCHIVE_TTL)
+
+def fetch_master_items(page_size: int = 200) -> List[Dict[str, Any]]:
+    """分页拉取产品主数据，避免 200 条上限造成静默截断。"""
+    items: List[Dict[str, Any]] = []
+    for page in range(1, MAX_MASTER_PAGES + 1):
+        raw = run_meegle_cmd([
+            "workitem", "search-filter",
+            "--project-key", PROJECT_KEY,
+            "--work-item-type-keys", MASTER_TYPE_KEY,
+            "--page-size", str(page_size),
+            "--page-num", str(page)
+        ])
+        batch = raw if isinstance(raw, list) else (raw.get("data", []) if isinstance(raw, dict) else [])
+        items.extend(batch)
+        if len(batch) < page_size:
+            return items
+    raise RuntimeError(
+        f"产品主数据超过 {page_size * MAX_MASTER_PAGES} 条仍未取完，疑似分页未生效，请检查 CLI page-num 支持"
+    )
+
 def get_chart_data(chart_id: str, ttl: int = CACHE_TTL, refresh: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
     raw = get_cached_or_fetch(
         f"chart_{chart_id}",
         lambda: run_meegle_cmd(["chart", "get", "--project-key", PROJECT_KEY, "--chart-id", chart_id]),
-        ttl=ttl,
+        ttl=ttl_for_chart(chart_id, ttl),
         refresh=refresh
     )
     quota_titles = raw.get("quota_titles", []) if isinstance(raw, dict) else []
@@ -169,18 +197,12 @@ def resolve_user_names(user_keys: List[str]) -> Dict[str, str]:
     return known
 
 def get_product_master(ttl: int = CACHE_TTL, refresh: bool = False) -> Dict[str, Dict[str, Any]]:
-    raw = get_cached_or_fetch(
+    items = get_cached_or_fetch(
         "product_master",
-        lambda: run_meegle_cmd([
-            "workitem", "search-filter",
-            "--project-key", PROJECT_KEY,
-            "--work-item-type-keys", MASTER_TYPE_KEY,
-            "--page-size", "200"
-        ]),
-        ttl=ttl,
+        fetch_master_items,
+        ttl=max(ttl, MASTER_TTL),
         refresh=refresh
     )
-    items = raw if isinstance(raw, list) else (raw.get("data", []) if isinstance(raw, dict) else [])
     b_lines = get_business_lines(ttl=ttl, refresh=refresh)
     
     # Pre-collect all user keys inside role_owners

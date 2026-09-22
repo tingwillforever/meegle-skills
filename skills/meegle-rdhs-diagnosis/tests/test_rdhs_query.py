@@ -7,6 +7,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from rdhs_query import (
+    ARCHIVE_TTL,
+    CURRENT_CHART_ID,
+    LAST_CHART_ID,
+    MAX_MASTER_PAGES,
+    SECONDARY_LINE_TREND_CHART_ID,
+    fetch_master_items,
     format_governance_entries,
     format_full_leaderboard,
     format_product_candidates,
@@ -14,6 +20,7 @@ from rdhs_query import (
     is_eligible_product,
     parse_trend_rows,
     summarize_scope,
+    ttl_for_chart,
 )
 
 
@@ -132,6 +139,51 @@ class RdhsQueryTest(unittest.TestCase):
 
         self.assertIn("交付周期暂无有效样本", judgement)
         self.assertNotIn("0.00 → 0.00 天（持平）", judgement)
+
+    def test_current_month_chart_stays_realtime_while_archives_are_cached(self):
+        self.assertEqual(ttl_for_chart(CURRENT_CHART_ID, 0), 0)
+        self.assertEqual(ttl_for_chart(CURRENT_CHART_ID, 3600), 3600)
+        self.assertEqual(ttl_for_chart(LAST_CHART_ID, 0), ARCHIVE_TTL)
+        self.assertEqual(ttl_for_chart(SECONDARY_LINE_TREND_CHART_ID, 0), ARCHIVE_TTL)
+        self.assertEqual(ttl_for_chart(LAST_CHART_ID, 7200), 7200)
+
+    def test_master_pagination_collects_every_page(self):
+        import rdhs_query
+
+        pages = {
+            1: [{"id": i} for i in range(200)],
+            2: [{"id": 200 + i} for i in range(200)],
+            3: [{"id": 400 + i} for i in range(42)],
+        }
+        calls = []
+
+        def fake_run(args):
+            page = int(args[args.index("--page-num") + 1])
+            calls.append(page)
+            return pages.get(page, [])
+
+        original = rdhs_query.run_meegle_cmd
+        rdhs_query.run_meegle_cmd = fake_run
+        try:
+            items = fetch_master_items()
+        finally:
+            rdhs_query.run_meegle_cmd = original
+
+        self.assertEqual(len(items), 442)
+        self.assertEqual(calls, [1, 2, 3])
+
+    def test_master_pagination_fails_loudly_instead_of_truncating(self):
+        import rdhs_query
+
+        original = rdhs_query.run_meegle_cmd
+        rdhs_query.run_meegle_cmd = lambda args: [{"id": i} for i in range(200)]
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                fetch_master_items()
+        finally:
+            rdhs_query.run_meegle_cmd = original
+
+        self.assertIn(str(200 * MAX_MASTER_PAGES), str(caught.exception))
 
     def test_fuzzy_product_matches_are_candidates_not_an_average(self):
         matched = [
