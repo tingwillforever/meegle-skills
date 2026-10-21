@@ -25,6 +25,7 @@ meegle <resource> <method> [flags] --format json
 统一按以下条件发现，不将诊断变成固定业务前置：
 
 - **inspect**：参数/能力/projection 不确定、新复杂 shape、命令报错需诊断或 schema 过期/漂移时读取 live descriptor。已验证 public CLI contract 覆盖且当前上下文未变的普通读路径，不为展示固定追加 inspect；不从示例推导未知能力。
+- **只读自动分页**：`--auto-paginate` 属于 Execution control 层，首版严格收敛至已验证协议的只读搜索命令（`workitem search-filter`、`workitem search-by-params`）。它自动追踪页码/总数合并多页数据并具备防死循环与 200 页/连续空页熔断保护。严禁对写操作使用（非白名单命令在前置校验阶段直接拒绝，保证零 tools/call 业务请求）。
 - **只读 dry-run**：普通已知条件直接查询，不因分页/projection 固定预览；新复杂嵌套条件、时间边界、shape 不确定或明确排障时先预览 normalized request。
 - **写入/conditional/destructive**：仍按对应 SOP 保留命令面、risk/capability、用户授权、写前预览及写后核验；上述普通读豁免不适用于写。destructive 必须用户明确要求并带 `--confirm`；conditional warning 不等于已授权。
 - **证据范围**：仅同任务、同 profile/账号/空间/类型且未漂移的适用证据可复用；变化时重新确认相应权威证据，不缓存权限。空间与元数据发现见 [workitem.md](workitem.md#发现与复用)。
@@ -77,7 +78,7 @@ meegle inspect comment.add --format json
 | 语义层 | 代表 flag | 是否进入后端业务请求 | 使用原则 |
 |---|---|---:|---|
 | Request input | 命令自身 flags、`--params/-P`、`--set`、支持 backend projection 的 `--select` | 是 | 用于过滤、分页、写入、字段 projection 等请求语义 |
-| Execution control | `--dry-run`、`--refresh` | 否 | 控制 CLI 执行流程、认证刷新或请求预览 |
+| Execution control | `--dry-run`、`--refresh`、`--auto-paginate` | 否 | 控制 CLI 执行流程、认证刷新、请求预览或自动分页聚合 |
 | Output display | `--format`、`--envelope`、`--verbose`、`--output-select` | 否 | 控制本地输出形状或诊断信息，不替代后端过滤 |
 | Compat / lower-level | `--fields` 等 API-native 参数 | 是 | 仅在命令特定兼容场景使用，不作为默认产品化 UX |
 

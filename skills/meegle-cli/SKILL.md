@@ -57,7 +57,7 @@ meegle url decode --url '<URL>' --format json
 3. 普通内置条件优先 `search-filter`；严格“我负责”、自定义/关联字段、复杂 AND/OR 走 `search-by-params`，构造前必读 [search-params-format.md](references/search-params-format.md)。固定视图走 [view.md](references/view.md)，不能把视图名当工作项标题。
 4. `inspect` / 只读 dry-run 的触发条件统一见 [cli-guide 命令发现](references/cli-guide.md#命令发现)：已验证普通读 shape 不固定重复检查；不确定能力/新复杂 shape/时间边界/漂移或排障才补相应检查，写入检查独立保留。`runtime_source == "snapshot"` 时只做只读诊断，停止业务；弃用命令优先 replacement。
 5. `--select` 是后端 projection，`--output-select` 仅本地裁剪，不替代过滤；按 [cli-guide](references/cli-guide.md#flag-语义层) 选择，不串用相似 flags。destructive 命令必须用户明确要求并带 `--confirm`；conditional 命令先核对 caveat/risk。
-6. 无依赖命令可并行，有依赖串行；分页先读首页再按任务需要翻页。写入及批量创建服从 SOP 的更严格顺序，临时数据清理仍须授权且仅用公开支持路径。
+6. 无依赖命令可并行，有依赖串行；分页先读首页再按任务需要翻页：用户明确要“全部/导出/跨页统计”且命令属于只读搜索时，用 `--auto-paginate` 一次取全（边界见 [批量读取与分页硬上限](references/workitem.md#批量读取与分页硬上限)），未要求时不要主动拉全量。写入及批量创建服从 SOP 的更严格顺序，临时数据清理仍须授权且仅用公开支持路径。
 
 ## 高频黄金路径速查 (Golden Paths)
 

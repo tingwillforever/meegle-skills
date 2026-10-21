@@ -33,6 +33,9 @@ SKILL.md 主文件已经收录错误处理总则与熔断条件，本文件提�
 | `cannot unmarshal object...` | 核对外层 CLI JSON 编码与内层字段类型；只在有契约依据且确认无副作用后有界修正 |
 | `不满足层级配置`（级联层级错误） | 查 `children` 树，展示末级叶子节点让用户选择 |
 | `invalid select option(s)`（枚举不合法） | 从 `possible values` 匹配；唯一匹配则修正重试，否则询问用户 |
+| `CLIENT_MISSING_REQUIRED`（`missing required parameters: --a, --b`）| 一次性列出全部缺失 flags/位置参数，不是逐个报错。补齐列出的全部输入后重试，不要按单参数反复试探；`--params` / `--set` / profile 默认空间也能满足对应要求 |
+| `CLIENT_PAGINATION_INCOMPLETE` | 自动分页未取全（200 页上限、异常空页等），**不得声称已取全部**。按 suggestion 给出的页码/游标重跑，或改用更窄的筛选条件 |
+| `CLIENT_PAGINATION_FAILED` / `CLIENT_PAGINATION_UNSUPPORTED` | 后续页结构异常、游标重复/页码不推进，或响应没有可识别分页信号。不要用已取得的首页数据当完整结果；改用手工 `--page-num` 逐页核实，或报告该命令不支持自动分页 |
 
 ## 数据权限硬停错误
 

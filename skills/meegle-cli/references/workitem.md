@@ -96,6 +96,8 @@ bucket 查询完成后，默认展示仍走统一可读化 gate：若列表页�
 
 默认只展示前 `10` 条。若结果包含 `pagination.total`，说明“共命中 N 条，当前先展示前 10 条”；只有用户明确要求“继续 / 更多 / 全部 / 导出”时，才继续分页或扩大输出。若当前任务需要总量、分布或整体视角，直接读取返回里的 `pagination.total/page_num/page_size`；若输出里没有 `pagination`，先确认该响应原本是否就不带分页元信息，或是否还在使用旧版本产物，不要据此判断后端没有总数。
 
+用户明确要求“全部 / 导出 / 跨页统计”时，允许的只读搜索命令（`search-filter`、`search-by-params`）可加 `--auto-paginate` 一次取全并合并；默认不加，避免无谓拉取全量。它的边界见 [批量读取与分页硬上限](#批量读取与分页硬上限)。
+
 默认展示字段只适用于查询主体的最终读取，不适用于筛选锚点 lookup。
 
 锚点 lookup 用来拿被关联工作项 ID，命令形状固定为：
@@ -425,7 +427,7 @@ meegle workitem search-by-params \
 | 命令 | 上限 | 超限表现 | 正确做法 |
 |---|---|---|---|
 | `workitem get --work-item-ids` | **单次 50 个 ID** | `{"err_code":20028,"err_msg":"Workitem Ids Limit 50"}` | 本地按 50 切批，逐批 `workitem get` 后合并；不要传全量 ID 试一次 |
-| `workitem search-filter --page-size` | **200** | `{"err_code":20006,"err_msg":"Invalid Param","err":{"msg":"page size should less than 200"}}` | 用 `--page-num` 分页，或按 bucket 拆查询 |
+| `workitem search-filter --page-size` | **200** | `{"err_code":20006,"err_msg":"Invalid Param","err":{"msg":"page size should less than 200"}}` | 单页查询或按 bucket 拆查询；确需全部时用 `--auto-paginate`，或手工 `--page-num` 逐页 |
 
 批量补取模板（当前展示页或当前任务集 ≤50 时一次完成）：
 
@@ -438,7 +440,15 @@ meegle workitem get \
   --format json
 ```
 
-当任务需要跨页总量或聚合分布，而你拿到的响应里**没有 `pagination`** 时，不要假定可以本地全量聚合：CLI 是 stateless 单次调用，无法在一条命令里跨页统计。此时要么明确告知不可行并给出替代路径（固定视图 / 图表），要么先确认该命令本来就不返回分页元信息。
+当任务需要跨页总量或聚合分布，而你拿到的响应里**没有 `pagination`** 时，不要假定可以本地全量聚合：先确认该命令本来就不返回分页元信息。只读搜索（`search-filter`、`search-by-params`）在有 `pagination.total` 时可加 `--auto-paginate` 合并全部页，此时读取 `meta.pages_merged` / `meta.total_items` 或合并后数组长度作为证据；不要自行按 `data.length` 推定全量。
+
+`--auto-paginate` 的边界必须如实转述，不得夸大为“所有列表都支持”或“异常也能自动补齐”：
+
+- 仅上述两个只读搜索命令可用；其他命令（含写操作）传入会在发出业务请求前被拒绝，不是静默忽略。
+- 默认仍只返回单页；只有显式加 flag 才跨页。
+- 结果是一次性合并后输出，不是流式；数据量大时耗时会明显增加。
+- 命中 200 页上限、异常空页、后页缺分页元信息、游标/页码不推进时，报 `CLIENT_PAGINATION_INCOMPLETE` / `CLIENT_PAGINATION_FAILED`，**不返回部分结果冒充全量**；需要继续时按提示从报错给出的页码/游标重跑。
+- 分页期间数据被新增、删除或重排，仍可能出现重复或遗漏；结论应表述为“当次取全”，不是快照一致。
 ---
 
 ## 关联字段过滤
