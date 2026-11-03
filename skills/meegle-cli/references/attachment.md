@@ -24,6 +24,8 @@ meegle inspect attachment.delete --format json
 
 上传前可用 `--dry-run --format json` 预览 normalized request。附件上传的 dry-run 只展示本机路径、文件名、大小、内容类型和传输方式，不输出文件内容或 base64 数据。新版 MCP Server 发布 `file_upload.transport=http_multipart` capability 后，CLI 会以 multipart 文件流上传，不再把文件编码为 JSON/base64。
 
+multipart 上传时，CLI 会把 dry-run 展示的 `content_type` 作为文件分片的 `Content-Type` 发送，MCP Server 转发给 Meegle OpenAPI 时沿用该声明类型（未声明时按扩展名兜底）。附件回读类型由此决定：一旦被写成 `application/octet-stream`，图片和视频只能下载、无法在线预览。回读附件字段时若看到实为图片的文件 `type` 是 `application/octet-stream`，按上传链路回归处理——同时升级 CLI 与 MCP Server（任一端未升级都可能仍被覆盖）后重传，不要依赖服务端按扩展名推断。
+
 如果服务端没有发布 multipart capability，CLI 会保留旧的 MCP JSON tool 兼容路径；大文件仍可能受到 JSON body 限制。遇到 413 时，应升级 MCP Server 与 CLI，使 `attachment.upload` manifest 含有 `file_upload.transport = "http_multipart"`。
 
 ---
