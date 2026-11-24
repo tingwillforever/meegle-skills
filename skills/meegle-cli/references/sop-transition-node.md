@@ -100,7 +100,7 @@ meegle workflow list-state-required \
 | 字段类型 | 处理 |
 |---|---|
 | `actual_work_time` | 页面登记 |
-| `node_finished_conclusion` / `node_finished_opinion` | 历史记录存在静默忽略，不能靠 success 判断写入 |
+| `node_finished_conclusion` / `node_finished_opinion` | 不走 `workflow update-node --fields`（后端返回 `30009 field_value_pairs ... can not find field`）；用 `workitem conclusion-options` 取 option key 后调 `workitem update-finished`，见下方说明 |
 | `owners_finished_info` | 各负责人在页面操作 |
 | `vote-boolean` / `vote-option` / `vote-option-multi` | 页面交互 |
 | `compound_field` / `multi_user_compound_field` | 当前路径未证明安全支持 |
@@ -108,6 +108,29 @@ meegle workflow list-state-required \
 | 计算字段 | 只读 |
 
 输出受阻节点、字段名/类型、原因与待用户操作，不自动换命令绕过。以上沿用历史限制，不代表本次逐类型业务验证。
+
+**节点完成结论（迭代验收结论等）——独立接口，不进 `fields`：**
+
+结论和意见不是节点表单字段，`workflow update-node --fields` 写不了；它们走独立接口：
+
+```bash
+# 1. 取该节点配置的结论标签（读 `finished_overall_conclusion_option`；`finished_conclusion_option` 的数字 key 已废弃）
+meegle workitem conclusion-options --project-key PROJ \
+  --work-item-type-key TYPE_KEY --work-item-id 12345 --node-ids '["state_7"]'
+
+# 2. 写结论（operation_type=node 仅节点负责人可操作；owner 写个人结论/意见）
+meegle workitem update-finished --project-key PROJ \
+  --work-item-type-key TYPE_KEY --work-item-id 12345 --node-id state_7 \
+  --operation-type node --finished-conclusion-option-key system_passed
+
+# 3. 回读核对
+meegle workitem finished-info --project-key PROJ \
+  --work-item-type-key TYPE_KEY --work-item-id 12345 --node-ids '["state_7"]'
+```
+
+- 清除单字段用空字符串：`--finished-conclusion-option-key ''` 删结论，`--opinion ''` 删意见；不传表示不修改。
+- `project_key` 只有 UUID 形态可靠：MCP 会自动把 simple_name 转 UUID 并在解析失败时拒绝请求；直连 OpenAPI 时必须自己传 UUID，否则 `update` 会 403、`batch_query` 会静默返回空。
+- 写成功后必须 `finished-info` 回读；`err_code: 0` 不能单独作为写入成功的依据。
 
 ### STEP 4 — 构造字段并预览必要补充
 
@@ -122,6 +145,7 @@ meegle workflow list-state-required \
 | 节点差异排期 | `different_schedule=true` 时 `--schedules` array<object>，owners 对应真实负责人 |
 | 节点估分 | 对应排期对象的 `points`；不造默认值 |
 | 节点角色 | 仅核验配置和授权后使用 `--role-assignee`；保留非目标角色/成员 |
+| 节点完成结论 / 意见 | `workitem update-finished`；不放进 `fields`，也不当作必填表单字段补齐 |
 | `form_item_type = "node_field"` | `workflow update-node --fields` 或 `workflow transition --fields` |
 | `form_item_type = "field"` | 工作项字段走 `workitem update --update-fields`，遵循更新 SOP，不把节点字段送入该入口 |
 

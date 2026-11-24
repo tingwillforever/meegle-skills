@@ -161,8 +161,8 @@ These fields **cannot be written via API**. If they appear as required fields bl
 | Field Type | Why It Fails |
 |-----------|-------------|
 | `actual_work_time` | Must be logged via work hours page |
-| `node_finished_conclusion` | `update_node` silently ignores — returns success but does not persist |
-| `node_finished_opinion` | Same — silent ignore |
+| `node_finished_conclusion` | Not a node form field: `workflow update-node --fields` fails with `30009 Field Not Found`. Use `workitem conclusion-options` for the option keys, then `workitem update-finished` with `operation_type` |
+| `node_finished_opinion` | Same API family: `workitem update-finished --opinion` (`''` clears it) |
 | `owners_finished_info` | Only individual owners can fill via page |
 | `vote-boolean` / `vote-option` / `vote-option-multi` | Page-only interactive controls |
 | `compound_field` / `multi_user_compound_field` | Complex internal validation, API unreliable |

@@ -28,8 +28,6 @@
 遇到下列字段作为必填写入目标时，默认停止并说明需要页面或管理员处理：
 
 - `actual_work_time`
-- `node_finished_conclusion`
-- `node_finished_opinion`
 - `owners_finished_info`
 - `vote-boolean`
 - `vote-option`
@@ -37,6 +35,8 @@
 - `compound_field`
 - `multi_user_compound_field`
 - 计算字段
+
+> 例外：`node_finished_conclusion` / `node_finished_opinion` 不是节点表单字段，`workflow update-node --fields` 会返回 `30009 Field Not Found`。它们走 `meegle.workitem.review.conclusionOptions` → `review.update` → `review.batchQuery`（CLI：`workitem conclusion-options` / `update-finished` / `finished-info`）。该系列接口的 `project_key` 必须是空间 UUID；MCP 会做 simple_name 转换，解析失败时直接拒绝请求。
 
 附件字段不要内联进工作项字段值；按协作路径上传或下载附件。
 
